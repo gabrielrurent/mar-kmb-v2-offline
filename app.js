@@ -4,7 +4,7 @@
    ============================================================ */
 
 var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdKkYRNlbgdJCets5L-0AfufMB4_79_HzvoQkeE9aZAqkKZiXCZHXnG6Q/exec' };
-var APP_VERSION = 'v36'; // samakan dgn CACHE di sw.js tiap rilis
+var APP_VERSION = 'v37'; // samakan dgn CACHE di sw.js tiap rilis
 var S = { token:null, me:null, role:null, wos:[], refs:null, refsAt:null, pending:[], active:[], approved:[], transfers:[], monitoring:[], monitoringOverall:{}, outbox:[], lastSync:null, syncing:false, tab:'wos', appSub:'pending', showOutbox:false, crossFunc:false, timerStates:{} };
 // PERF: katalog referensi (±1400 job) berat — tarik ulang maks 1x/12 jam.
 var REFS_TTL_MS = 12*60*60*1000;
@@ -991,7 +991,14 @@ function closeModal(id) { document.getElementById(id).style.display='none'; }
 
 /* ── Render ── */
 function showScreen(nm) {
-  document.getElementById('screen-login').style.display = nm==='login'?'block':'none';
+  // Versi ditampilkan di layar login — supaya saat ada keluhan, versi yang
+  // dipakai bisa langsung dibaca tanpa harus masuk dulu.
+  var lv = document.getElementById('loginVersion');
+  if (lv) lv.textContent = APP_VERSION;
+  if (nm !== 'login') setLoginLoading(false);
+  // 'flex' (bukan 'block') — layar login memakai flexbox agar isinya benar-benar
+  // di tengah dan tetap bisa di-scroll saat keyboard HP terbuka.
+  document.getElementById('screen-login').style.display = nm==='login'?'flex':'none';
   document.getElementById('screen-main').style.display = nm==='main'?'block':'none';
 }
 function esc(s) { return String(s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
