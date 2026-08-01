@@ -773,9 +773,22 @@ function refreshCreateMechanics() {
     rows[r].innerHTML = '<option value="">-- Pilih Mekanik --</option>';
     for (var m=0;m<mechs.length;m++) {
       var ms = String(mechs[m].section||'').toLowerCase();
+      // Kolom section BOLEH berisi daftar dipisah koma ("tyreman,field"). Dulu
+      // dibandingkan sebagai satu string utuh → mekanik ber-section ganda tak
+      // pernah cocok dan dropdown kosong. Mekanik TANPA section juga ikut
+      // tersaring; sekarang selalu tampil, sama seperti versi web.
+      var msList = [];
+      if (ms) {
+        var parts = ms.split(',');
+        for (var pi=0; pi<parts.length; pi++) {
+          var v = parts[pi].replace(/^\s+|\s+$/g,'');
+          if (v) msList.push(v);
+        }
+      }
+      var cocok = (msList.length === 0) || (msList.indexOf(sec) !== -1);
       // Default: hanya mekanik section terpilih. Lintas fungsi → tampilkan semua (dgn tag section).
-      if (!showAll && ms !== sec) continue;
-      var tag = (ms && ms !== sec) ? ' ['+ms+']' : '';
+      if (!showAll && sec && !cocok) continue;
+      var tag = (!cocok && ms) ? ' ['+ms+']' : '';
       rows[r].innerHTML += '<option value="'+esc(mechs[m].mechanic_id)+'">'+esc(mechs[m].mechanic_name)+esc(tag)+'</option>';
     }
     rows[r].value = cur;
