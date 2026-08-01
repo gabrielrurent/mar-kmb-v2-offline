@@ -1,4 +1,4 @@
-var CACHE = 'mar-v28';
+var CACHE = 'mar-v29';
 var ASSETS = ['./', './index.html', './app.js', './manifest.json', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', function(e) {
   e.waitUntil(caches.open(CACHE).then(function(c){return c.addAll(ASSETS);}));

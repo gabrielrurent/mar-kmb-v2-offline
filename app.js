@@ -5,11 +5,207 @@
 
 var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdKkYRNlbgdJCets5L-0AfufMB4_79_HzvoQkeE9aZAqkKZiXCZHXnG6Q/exec' };
 var APP_VERSION = 'v26'; // samakan dgn CACHE di sw.js tiap rilis
-var S = { token:null, me:null, role:null, wos:[], refs:null, refsAt:null, pending:[], active:[], approved:[], transfers:[], outbox:[], lastSync:null, syncing:false, tab:'wos', appSub:'pending', showOutbox:false, crossFunc:false };
+var S = { token:null, me:null, role:null, wos:[], refs:null, refsAt:null, pending:[], active:[], approved:[], transfers:[], outbox:[], lastSync:null, syncing:false, tab:'wos', appSub:'pending', showOutbox:false, crossFunc:false, timerStates:{} };
 // PERF: katalog referensi (±1400 job) berat — tarik ulang maks 1x/12 jam.
 var REFS_TTL_MS = 12*60*60*1000;
 function refsStale() { return !S.refs || !S.refsAt || (Date.now() - new Date(S.refsAt).getTime() > REFS_TTL_MS); }
 var db = null;
+
+/* ══ LIVE TIMER (port 1:1 dari SUM V2) ══════════════════════════════════════
+   Beda dari SUM: di KMB picker jam TETAP TERLIHAT dan boleh dikoreksi manual.
+   Timer hanya mengisinya; angka akhir yang dikirim tetap dari picker. */
+var _liveTimerTicker = null;
+
+function getTimerState(woId) {
+  if (!S.timerStates) S.timerStates = {};
+  if (!S.timerStates[woId]) S.timerStates[woId] = { state:'idle', start_epoch:0, elapsed_ms:0 };
+  return S.timerStates[woId];
+}
+function saveTimerState(woId, state) {
+  if (!S.timerStates) S.timerStates = {};
+  S.timerStates[woId] = state;
+  kvSet('timer_states', S.timerStates);
+}
+
+/**
+ * Jeda semua WO lain yang masih berjalan.
+ * JALUR UANG: tanpa ini dua timer bisa jalan bersamaan → jam dobel-hitung →
+ * poin & rupiah salah. Waktu WO yang dijeda tetap tersimpan utuh.
+ */
+function pauseOtherRunningTimers(currentWoId) {
+  var paused = [];
+  if (!S.timerStates) return paused;
+  for (var id in S.timerStates) {
+    if (!S.timerStates.hasOwnProperty(id)) continue;
+    if (String(id) === String(currentWoId)) continue;
+    var st = S.timerStates[id];
+    if (!st || st.state !== 'running') continue;
+    st.elapsed_ms = (parseFloat(st.elapsed_ms)||0) + (Date.now() - (parseFloat(st.start_epoch)||Date.now()));
+    st.state = 'paused'; st.start_epoch = 0;
+    S.timerStates[id] = st; paused.push(id);
+  }
+  if (paused.length) kvSet('timer_states', S.timerStates);
+  return paused;
+}
+
+function startLiveTimer(woId) {
+  var autoPaused = pauseOtherRunningTimers(woId);   // hanya SATU WO boleh berjalan
+  var st = getTimerState(woId);
+  st.state = 'running'; st.start_epoch = Date.now();
+  saveTimerState(woId, st);
+  startTimerTicker(); renderAll();
+  if (autoPaused.length) toast('⏸ '+autoPaused.length+' WO lain otomatis dijeda (waktunya tersimpan)');
+}
+function pauseLiveTimer(woId) {
+  var st = getTimerState(woId);
+  if (st.state !== 'running') return;
+  st.state = 'paused';
+  st.elapsed_ms += (Date.now() - st.start_epoch);
+  st.start_epoch = 0;
+  saveTimerState(woId, st); renderAll();
+}
+/**
+ * Hentikan timer TANPA menghapus waktunya — kalau mekanik menutup form tanpa
+ * mengirim, jam kerjanya tidak boleh hilang. Baru dibersihkan setelah masuk
+ * antrean kirim (clearTimerAfterSubmit).
+ */
+function stopLiveTimer(woId) {
+  var st = getTimerState(woId);
+  var totalMs = (parseFloat(st.elapsed_ms)||0);
+  if (st.state === 'running') totalMs += (Date.now() - (parseFloat(st.start_epoch)||Date.now()));
+  st.state = 'paused'; st.elapsed_ms = totalMs; st.start_epoch = 0;
+  saveTimerState(woId, st); renderAll();
+  return totalMs;
+}
+function clearTimerAfterSubmit(woId) {
+  saveTimerState(woId, { state:'idle', start_epoch:0, elapsed_ms:0 });
+  renderAll();
+}
+
+function msToJamMenit(ms) {
+  var tot = Math.round((parseFloat(ms)||0)/60000);
+  var j = Math.floor(tot/60), m = tot%60;
+  if (j>0 && m>0) return j+' jam '+m+' menit';
+  if (j>0) return j+' jam';
+  return m+' menit';
+}
+function formatMsToHms(ms) {
+  if (!ms || ms < 0) return '00:00:00';
+  var sec = Math.floor(ms/1000);
+  var hr = Math.floor(sec/3600);
+  var min = Math.floor((sec-(hr*3600))/60);
+  sec = sec-(hr*3600)-(min*60);
+  if (hr<10) hr='0'+hr; if (min<10) min='0'+min; if (sec<10) sec='0'+sec;
+  return hr+':'+min+':'+sec;
+}
+function formatToDatetimeLocal(date) {
+  var pad = function(n){ return (n<10?'0':'')+n; };
+  return date.getFullYear()+'-'+pad(date.getMonth()+1)+'-'+pad(date.getDate())+
+    'T'+pad(date.getHours())+':'+pad(date.getMinutes());
+}
+function showTimerSummary(totalMs, startD, endD) {
+  var box = document.getElementById('fTimerSummary');
+  if (!box) return;
+  if (!totalMs || totalMs <= 0) { box.style.display='none'; box.innerHTML=''; return; }
+  box.style.display = 'block';
+  box.innerHTML = '✅ Total waktu pengerjaan: <b>'+msToJamMenit(totalMs)+'</b>'+
+    '<div style="font-weight:600;font-size:11px;margin-top:3px;opacity:.85">'+
+    formatToDatetimeLocal(startD).replace('T',' ')+' → '+formatToDatetimeLocal(endD).replace('T',' ')+'</div>';
+}
+
+function startTimerTicker() {
+  if (_liveTimerTicker) return;
+  _liveTimerTicker = setInterval(function() {
+    var hasRunning = false;
+    if (S.timerStates) {
+      for (var id in S.timerStates) {
+        if (S.timerStates[id] && S.timerStates[id].state === 'running') { hasRunning = true; break; }
+      }
+    }
+    if (hasRunning) updateActiveTimerDisplays();
+  }, 1000);
+}
+function updateActiveTimerDisplays() {
+  if (!S.timerStates) return;
+  for (var woId in S.timerStates) {
+    var st = S.timerStates[woId];
+    if (!st) continue;
+    var curMs = st.elapsed_ms + (st.state==='running' ? (Date.now()-st.start_epoch) : 0);
+    var cardDisp = document.getElementById('timer-clock-'+woId);
+    if (cardDisp) cardDisp.textContent = formatMsToHms(curMs);
+    if (activeWo && String(activeWo.id) === String(woId)) {
+      var mDisp = document.getElementById('modalTimerDisplay');
+      if (mDisp) mDisp.textContent = formatMsToHms(curMs);
+    }
+  }
+}
+function updateModalTimerUI() {
+  if (!activeWo) return;
+  var st = getTimerState(activeWo.id);
+  var disp = document.getElementById('modalTimerDisplay');
+  var bStart = document.getElementById('modalBtnStart');
+  var bPause = document.getElementById('modalBtnPause');
+  var bStop  = document.getElementById('modalBtnStop');
+  if (!disp) return;
+
+  disp.textContent = formatMsToHms(st.elapsed_ms + (st.state==='running' ? (Date.now()-st.start_epoch) : 0));
+
+  if (st.state === 'idle') {
+    bStart.style.display='inline-block'; bStart.textContent='▶ Start';
+    bPause.style.display='none'; bStop.style.display='none';
+  } else if (st.state === 'running') {
+    bStart.style.display='none';
+    bPause.style.display='inline-block'; bStop.style.display='inline-block';
+  } else {
+    bStart.style.display='inline-block'; bStart.textContent='▶ Resume';
+    bPause.style.display='none'; bStop.style.display='inline-block';
+  }
+}
+function modalTimerStart() { if (activeWo) { startLiveTimer(activeWo.id); updateModalTimerUI(); } }
+function modalTimerPause() { if (activeWo) { pauseLiveTimer(activeWo.id); updateModalTimerUI(); } }
+function modalTimerStop() {
+  if (!activeWo) return;
+  var cur = getTimerState(activeWo.id);
+  var preview = (parseFloat(cur.elapsed_ms)||0) + (cur.state==='running' ? (Date.now()-cur.start_epoch) : 0);
+  if (preview > 0 && preview < 60000 &&
+      !confirm('Durasi kerja baru '+msToJamMenit(preview)+'.\nYakin hentikan timer dan pakai durasi ini?')) return;
+  var totalMs = stopLiveTimer(activeWo.id);
+  if (totalMs > 0) {
+    var now = new Date(), start = new Date(now.getTime()-totalMs);
+    document.getElementById('fStart').value = formatToDatetimeLocal(start);
+    document.getElementById('fEnd').value   = formatToDatetimeLocal(now);
+    showTimerSummary(totalMs, start, now);
+  }
+  updateModalTimerUI();
+}
+/** Blok kontrol timer di kartu WO (Start / Pause / Finish). */
+function _timerControls(wo) {
+  var st = getTimerState(wo.id);
+  var curMs = st.elapsed_ms + (st.state==='running' ? (Date.now()-st.start_epoch) : 0);
+  var id = esc(String(wo.id));
+  var isRunning = (st.state==='running'), isPaused = (st.state==='paused');
+  return '<div class="timerPill">'+
+    '<div style="font-size:11px;font-weight:700;color:#6b7280;margin-bottom:2px">⏱️ LIVE TIMER</div>'+
+    '<div class="timerClock" id="timer-clock-'+id+'">'+formatMsToHms(curMs)+'</div>'+
+    '<div class="timerBtns">'+
+      (isRunning?'':'<button type="button" class="timerBtn btnStart" onclick="startLiveTimer(\''+id+'\')">▶ '+(isPaused?'Resume':'Start')+'</button>')+
+      (isRunning?'<button type="button" class="timerBtn btnPause" onclick="pauseLiveTimer(\''+id+'\')">⏸ Pause</button>':'')+
+      (st.state!=='idle'?'<button type="button" class="timerBtn btnStop" onclick="openSubmitWithTimer(\''+id+'\')">⏹ Finish &amp; Isi</button>':'')+
+    '</div>'+
+  '</div>';
+}
+
+/** Dipakai tombol "Finish & Isi" di kartu WO: stop timer lalu buka form terisi. */
+function openSubmitWithTimer(woId) {
+  var totalMs = stopLiveTimer(woId);
+  openSubmitForm(woId);
+  if (totalMs > 0) {
+    var now = new Date(), start = new Date(now.getTime()-totalMs);
+    document.getElementById('fStart').value = formatToDatetimeLocal(start);
+    document.getElementById('fEnd').value   = formatToDatetimeLocal(now);
+    showTimerSummary(totalMs, start, now);
+  }
+}
 
 /* ── IndexedDB ── */
 function openDb() {
@@ -260,7 +456,7 @@ function doLogout() {
   tx.objectStore('outbox').clear();
   tx.oncomplete = function() {
     // AUDIT K3: reset HARUS bentuk state lengkap — field hilang = crash setelah re-login
-    S = { token:null, me:null, role:null, wos:[], refs:null, refsAt:null, pending:[], active:[], approved:[], transfers:[], outbox:[], lastSync:null, syncing:false, tab:'wos', appSub:'pending', showOutbox:false, crossFunc:false };
+    S = { token:null, me:null, role:null, wos:[], refs:null, refsAt:null, pending:[], active:[], approved:[], transfers:[], outbox:[], lastSync:null, syncing:false, tab:'wos', appSub:'pending', showOutbox:false, crossFunc:false, timerStates:{} };
     showScreen('login');
   };
 }
@@ -284,6 +480,9 @@ function openSubmitForm(woId) {
   document.getElementById('fHm').value=''; document.getElementById('fKm').value='';
   document.getElementById('fPart').value='';
   var tn = document.getElementById('fTransferNote'); if (tn) tn.value='';
+  var tsum = document.getElementById('fTimerSummary');
+  if (tsum) { tsum.style.display='none'; tsum.innerHTML=''; }
+  updateModalTimerUI();
   showModal('submitModal');
 }
 
@@ -322,6 +521,7 @@ function queueSubmit() {
     payload:{wo_id:activeWo.id, start_time:new Date(st).toISOString(), end_time:new Date(en).toISOString(), hour_meter:hm, kilometers:km, part_category:part},
     status:'queued', created_at:new Date().toISOString() };
   obPut(op).then(refreshOutbox).then(function() {
+    clearTimerAfterSubmit(op.wo_id);   // timer baru dibersihkan setelah masuk antrean
     closeModal('submitModal'); renderAll();
     toast(navigator.onLine?'📮 Mengirim...':'📮 Tersimpan! Terkirim saat ada sinyal');
     syncNow(false);
@@ -803,7 +1003,8 @@ function renderWos(el) {
       '<div class="cardBody"><b>'+esc(wo.component_name||'-')+'</b>'+(wo.unit_name?' · '+esc(wo.unit_name):'')+(wo.target_hours?' · Target: '+fmtJamMenit(wo.target_hours):'')+'<br>'+
       '📍 '+esc(locLabel(wo.location))+' · Kondisi: '+esc(wcLabel(wo.work_condition))+'</div>'+
       (wo.keterangan?'<div class="ket">📝 '+esc(wo.keterangan)+'</div>':'')+
-      (canFill?'<button class="big" onclick="openSubmitForm(\''+esc(String(wo.id))+'\')">✍️ Isi & Kirim</button>':'')+
+      (canFill?_timerControls(wo):'')+
+      (canFill?'<button class="big" onclick="openSubmitWithTimer(\''+esc(String(wo.id))+'\')">✍️ Isi & Kirim</button>':'')+
       '</div>';
   });
   el.innerHTML=html;
@@ -1000,9 +1201,9 @@ function renderApprovedList(){
 window.addEventListener('online',function(){renderAll(); syncNow(false);});
 window.addEventListener('offline',renderAll);
 openDb().then(function() {
-  return Promise.all([kvGet('token'),kvGet('me'),kvGet('wos'),kvGet('refs'),kvGet('pending'),kvGet('last_sync'),kvGet('role'),kvGet('refs_at'),kvGet('active'),kvGet('approved'),kvGet('transfers')]);
+  return Promise.all([kvGet('token'),kvGet('me'),kvGet('wos'),kvGet('refs'),kvGet('pending'),kvGet('last_sync'),kvGet('role'),kvGet('refs_at'),kvGet('active'),kvGet('approved'),kvGet('transfers'),kvGet('timer_states')]);
 }).then(function(v) {
-  S.token=v[0]||null; S.me=v[1]||null; S.wos=v[2]||[]; S.refs=v[3]||null; S.pending=v[4]||[]; S.lastSync=v[5]||null; S.role=v[6]||'mechanic'; S.refsAt=v[7]||null; S.active=v[8]||[]; S.approved=v[9]||[]; S.transfers=v[10]||[];
+  S.token=v[0]||null; S.me=v[1]||null; S.wos=v[2]||[]; S.refs=v[3]||null; S.pending=v[4]||[]; S.lastSync=v[5]||null; S.role=v[6]||'mechanic'; S.refsAt=v[7]||null; S.active=v[8]||[]; S.approved=v[9]||[]; S.transfers=v[10]||[]; S.timerStates=v[11]||{};
   return refreshOutbox();
 }).then(function() {
   if ('serviceWorker' in navigator) {
@@ -1014,6 +1215,8 @@ openDb().then(function() {
     });
   }
   showScreen(S.token?'main':'login');
+  // Timer bisa masih berjalan dari sesi sebelumnya (state tersimpan di IndexedDB)
+  startTimerTicker();
   if (S.token) requestPeriodicSync();
   // iOS: beforeinstallprompt tak pernah ada → tampilkan tombol Instal manual (panduan)
   if (IS_IOS && !IS_STANDALONE) { var _ib = document.getElementById('installBtn'); if (_ib) _ib.style.display = ''; }
