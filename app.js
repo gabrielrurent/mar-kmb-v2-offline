@@ -5,7 +5,7 @@
 
 var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdKkYRNlbgdJCets5L-0AfufMB4_79_HzvoQkeE9aZAqkKZiXCZHXnG6Q/exec' };
 var APP_VERSION = 'v26'; // samakan dgn CACHE di sw.js tiap rilis
-var S = { token:null, me:null, role:null, wos:[], refs:null, refsAt:null, pending:[], active:[], approved:[], outbox:[], lastSync:null, syncing:false, tab:'wos', appSub:'pending', showOutbox:false, crossFunc:false };
+var S = { token:null, me:null, role:null, wos:[], refs:null, refsAt:null, pending:[], active:[], approved:[], transfers:[], outbox:[], lastSync:null, syncing:false, tab:'wos', appSub:'pending', showOutbox:false, crossFunc:false };
 // PERF: katalog referensi (±1400 job) berat — tarik ulang maks 1x/12 jam.
 var REFS_TTL_MS = 12*60*60*1000;
 function refsStale() { return !S.refs || !S.refsAt || (Date.now() - new Date(S.refsAt).getTime() > REFS_TTL_MS); }
@@ -150,7 +150,7 @@ function syncNow(manual) {
       // WO Saya disembunyikan) — hemat 1 panggilan API per sync.
       var tasks = [];
       if (S.role === 'mechanic') { tasks.push(pullWos()); }
-      else { tasks.push(pullPending()); tasks.push(pullActive()); if (refsStale()) tasks.push(pullRefs()); }
+      else { tasks.push(pullPending()); tasks.push(pullActive()); tasks.push(pullTransfers()); if (refsStale()) tasks.push(pullRefs()); }
       return Promise.all(tasks);
     })
     .then(function() { S.lastSync = new Date().toISOString(); subscribePush(); return kvSet('last_sync',S.lastSync); })
@@ -188,6 +188,14 @@ function pullRefs() {
     S.refs = r.result.refs;
     S.refsAt = new Date().toISOString();
     return kvSet('refs', S.refs).then(function(){ return kvSet('refs_at', S.refsAt); });
+  });
+}
+/** TRANSFER WO: daftar permintaan menunggu keputusan L1 (sudah difilter scope server). */
+function pullTransfers() {
+  return api('pull_transfers').then(function(r) {
+    if (!r.success) return;
+    S.transfers = (r.result && r.result.transfers) || [];
+    return kvSet('transfers', S.transfers);
   });
 }
 function pullPending() {
@@ -252,7 +260,7 @@ function doLogout() {
   tx.objectStore('outbox').clear();
   tx.oncomplete = function() {
     // AUDIT K3: reset HARUS bentuk state lengkap — field hilang = crash setelah re-login
-    S = { token:null, me:null, role:null, wos:[], refs:null, refsAt:null, pending:[], active:[], approved:[], outbox:[], lastSync:null, syncing:false, tab:'wos', appSub:'pending', showOutbox:false, crossFunc:false };
+    S = { token:null, me:null, role:null, wos:[], refs:null, refsAt:null, pending:[], active:[], approved:[], transfers:[], outbox:[], lastSync:null, syncing:false, tab:'wos', appSub:'pending', showOutbox:false, crossFunc:false };
     showScreen('login');
   };
 }
@@ -818,11 +826,14 @@ function fmtJamMenit(h){
   return m+' menit';
 }
 function renderApprovalTab(el) {
-  var subs = [['pending','✅ Pending',S.pending.length],['active','⏳ Aktif',S.active.length],['approved','🏆 Approved',S.approved.length]];
+  var subs = [['pending','✅ Pending',S.pending.length],['active','⏳ Aktif',S.active.length],
+              ['transfer','🔁 Transfer',S.transfers.length],['approved','🏆 Approved',S.approved.length]];
   var bar = '<div class="tabBar" style="display:flex;margin-bottom:12px">'+subs.map(function(s){
     return '<button class="tab'+(S.appSub===s[0]?' active':'')+'" onclick="switchAppSub(\''+s[0]+'\')">'+s[1]+' ('+s[2]+')</button>';
   }).join('')+'</div>';
-  var body = S.appSub==='active' ? renderActiveList() : (S.appSub==='approved' ? renderApprovedList() : renderPendingList());
+  var body = S.appSub==='active' ? renderActiveList()
+           : S.appSub==='transfer' ? renderTransferList()
+           : (S.appSub==='approved' ? renderApprovedList() : renderPendingList());
   el.innerHTML = bar + body;
 }
 function switchAppSub(sub){
@@ -843,6 +854,89 @@ function queuedNote(qop){ return '<div class="obinfo">📮 '+esc(opLabel(qop))+'
 function teamStr(team){ return (team||[]).map(function(t){ return esc(t.name)+(t.email?' <span class="sub" style="display:inline;margin:0">('+esc(t.email)+')</span>':''); }).join(', '); }
 function ovBadges(wo){ return (wo.has_override_spv?'<span class="badge" style="background:#4338ca">SPV override</span>':'')+(wo.has_override_supt?'<span class="badge" style="background:#7c3aed">SUPT override</span>':''); }
 function cancelBtn(wo){ return '<button class="big secondary" onclick="openCancelForm(\''+esc(String(wo.id))+'\',\''+esc(String(wo.wo_number))+'\')">🗑 Batalkan WO</button>'; }
+/* ── TRANSFER WO: keputusan L1 (offline-capable) ── */
+function renderTransferList(){
+  if (!S.transfers.length) return '<div class="empty">Tidak ada permintaan transfer dalam scope Anda.</div>';
+  var mechs = (S.refs && S.refs.mechanics) || [];
+  var html = '<div class="sub">'+S.transfers.length+' permintaan menunggu keputusan</div>';
+
+  S.transfers.forEach(function(tr){
+    var qop = queuedOpFor(tr.wo_id);
+    var opts = mechs.map(function(m){
+      return '<option value="'+esc(m.mechanic_id)+'">'+esc(m.mechanic_name)+' ('+esc(m.mechanic_id)+')</option>';
+    }).join('');
+    var tim = (tr.team||[]).map(function(t){ return esc(t.mechanic_name); }).join(', ');
+
+    html += '<div class="card"><div class="cardTop"><b>'+esc(tr.wo_number)+'</b>'+
+      '<span class="badge" style="background:#dd6b20">🔁 TRANSFER</span>'+
+      (tr.section?'<span class="badge" style="background:#334155">'+esc(tr.section)+'</span>':'')+'</div>'+
+      '<div class="cardBody">'+
+        'Diminta oleh <b>'+esc(tr.requested_by_name)+'</b><br>'+
+        (tr.keterangan ? '📝 '+esc(tr.keterangan)+'<br>' : '')+
+        (tr.transfer_note ? '💬 Catatan mekanik: <i>'+esc(tr.transfer_note)+'</i><br>' : '')+
+        (tim ? 'Tim sekarang: '+tim+'<br>' : '')+
+        // Dampak jam ditampilkan SEBELUM tombol — keputusan ini menambah jam
+        // kerja yang dibayar, jadi angkanya tidak disembunyikan.
+        '<div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:8px;margin-top:8px">'+
+          '<b style="color:#0369a1;font-size:12px">DAMPAK JAM KERJA</b><br>'+
+          'Sesi ini <b>'+fmtJamMenit(tr.session_hours)+'</b> · tercatat <b>'+fmtJamMenit(tr.partial_hours_now)+'</b> → '+
+          '<b style="color:#b45309">'+fmtJamMenit(tr.partial_hours_after)+'</b> bila disetujui<br>'+
+          '<span style="font-size:12px;color:#0369a1">Bila ditolak, sesi tersebut hangus.</span>'+
+        '</div>'+
+      '</div>';
+
+    if (qop) {
+      html += queuedNote(qop);
+    } else {
+      html += '<label style="margin-top:8px">Mekanik penerima *</label>'+
+        '<select multiple size="4" class="inp" id="trSel_'+esc(tr.wo_id)+'">'+opts+'</select>'+
+        '<div style="font-size:12px;color:#64748b;margin:4px 0 8px">Bisa pilih lebih dari satu. Semua penerima dapat poin penuh.</div>'+
+        '<div style="display:flex;gap:8px">'+
+          '<button class="big" style="flex:1" onclick="queueApproveTransfer(\''+esc(tr.wo_id)+'\',\''+esc(tr.wo_number)+'\')">✓ Setujui</button>'+
+          '<button class="big secondary" style="flex:1;background:#dc2626;color:#fff" onclick="queueRejectTransfer(\''+esc(tr.wo_id)+'\',\''+esc(tr.wo_number)+'\')">✗ Tolak</button>'+
+        '</div>';
+    }
+    html += '</div>';
+  });
+  return html;
+}
+
+function _trSelected(woId){
+  var sel = document.getElementById('trSel_'+woId);
+  if (!sel) return [];
+  var out=[];
+  for (var i=0;i<sel.options.length;i++) if (sel.options[i].selected) out.push(sel.options[i].value);
+  return out;
+}
+
+function queueApproveTransfer(woId, woNumber){
+  var targets = _trSelected(woId);
+  if (!targets.length) { toast('Pilih minimal satu mekanik penerima'); return; }
+  if (!confirm('Setujui transfer '+woNumber+' ke '+targets.length+' mekanik?\n\nJam sesi mekanik sebelumnya akan DIHITUNG, dan semua penerima dapat poin penuh.')) return;
+  var op = { op_id:uuid(), action:'approve_transfer', wo_id:woId, wo_number:woNumber,
+    payload:{wo_id:woId, target_mechanic_ids:targets},
+    status:'queued', created_at:new Date().toISOString() };
+  obPut(op).then(refreshOutbox).then(function(){
+    renderAll();
+    toast(navigator.onLine?'📮 Mengirim...':'📮 Tersimpan! Terkirim saat ada sinyal');
+    syncNow(false);
+  });
+}
+
+function queueRejectTransfer(woId, woNumber){
+  var reason = prompt('Alasan menolak transfer:');
+  if (!reason || !reason.trim()) { toast('Alasan wajib diisi'); return; }
+  if (!confirm('Tolak transfer '+woNumber+'?\n\nSesi kerja mekanik yang mengajukan akan HANGUS.')) return;
+  var op = { op_id:uuid(), action:'reject_transfer', wo_id:woId, wo_number:woNumber,
+    payload:{wo_id:woId, reason:reason.trim()},
+    status:'queued', created_at:new Date().toISOString() };
+  obPut(op).then(refreshOutbox).then(function(){
+    renderAll();
+    toast(navigator.onLine?'📮 Mengirim...':'📮 Tersimpan! Terkirim saat ada sinyal');
+    syncNow(false);
+  });
+}
+
 function renderPendingList(){
   if (!S.pending.length) return '<div class="empty">Tidak ada WO pending dalam scope Anda.</div>';
   var html='<div class="sub">'+S.pending.length+' WO menunggu approval</div>';
@@ -906,9 +1000,9 @@ function renderApprovedList(){
 window.addEventListener('online',function(){renderAll(); syncNow(false);});
 window.addEventListener('offline',renderAll);
 openDb().then(function() {
-  return Promise.all([kvGet('token'),kvGet('me'),kvGet('wos'),kvGet('refs'),kvGet('pending'),kvGet('last_sync'),kvGet('role'),kvGet('refs_at'),kvGet('active'),kvGet('approved')]);
+  return Promise.all([kvGet('token'),kvGet('me'),kvGet('wos'),kvGet('refs'),kvGet('pending'),kvGet('last_sync'),kvGet('role'),kvGet('refs_at'),kvGet('active'),kvGet('approved'),kvGet('transfers')]);
 }).then(function(v) {
-  S.token=v[0]||null; S.me=v[1]||null; S.wos=v[2]||[]; S.refs=v[3]||null; S.pending=v[4]||[]; S.lastSync=v[5]||null; S.role=v[6]||'mechanic'; S.refsAt=v[7]||null; S.active=v[8]||[]; S.approved=v[9]||[];
+  S.token=v[0]||null; S.me=v[1]||null; S.wos=v[2]||[]; S.refs=v[3]||null; S.pending=v[4]||[]; S.lastSync=v[5]||null; S.role=v[6]||'mechanic'; S.refsAt=v[7]||null; S.active=v[8]||[]; S.approved=v[9]||[]; S.transfers=v[10]||[];
   return refreshOutbox();
 }).then(function() {
   if ('serviceWorker' in navigator) {
