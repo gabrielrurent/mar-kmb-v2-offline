@@ -139,9 +139,10 @@
         <div><label>Jam Mulai *</label><input type="datetime-local" class="inp" id="fStart"></div>
         <div><label>Jam Selesai *</label><input type="datetime-local" class="inp" id="fEnd"></div>
       </div>
-      <div class="row2">
-        <div><label>Hour Meter *</label><input type="number" class="inp" id="fHm" min="0.1" step="any" placeholder="1250"></div>
-        <div><label>Kilometer *</label><input type="number" class="inp" id="fKm" min="0.1" step="any" placeholder="4500"></div>
+      <!-- HM & KM disembunyikan di semua section (1 Agu 2026), opsional di server -->
+      <div class="row2" id="hmKmWrap" style="display:none">
+        <div><label>Hour Meter</label><input type="number" class="inp" id="fHm" min="0.1" step="any" placeholder="1250"></div>
+        <div><label>Kilometer</label><input type="number" class="inp" id="fKm" min="0.1" step="any" placeholder="4500"></div>
       </div>
       <!-- Spare part tidak relevan untuk pekerjaan tyreman → disembunyikan per
            section (lihat openSubmitForm). 1:1 dengan web. -->

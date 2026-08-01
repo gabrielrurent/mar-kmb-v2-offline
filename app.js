@@ -525,8 +525,9 @@ function openSubmitForm(woId) {
   document.getElementById('fHm').value=''; document.getElementById('fKm').value='';
   document.getElementById('fPart').value='';
   // Tyreman: sembunyikan pilihan spare part (nilainya sudah dikosongkan di atas)
-  var _pw = document.getElementById('partWrap');
-  if (_pw) _pw.style.display = (String(activeWo.section||'').toLowerCase()==='tyreman') ? 'none' : '';
+  // HM, KM, dan Spare Part disembunyikan di SEMUA section (1 Agu 2026)
+  var _pw = document.getElementById('partWrap'); if (_pw) _pw.style.display='none';
+  var _hkw = document.getElementById('hmKmWrap'); if (_hkw) _hkw.style.display='none';
   var tn = document.getElementById('fTransferNote'); if (tn) tn.value='';
   var tsum = document.getElementById('fTimerSummary');
   if (tsum) { tsum.style.display='none'; tsum.innerHTML=''; }
@@ -559,12 +560,11 @@ function queueTransfer() {
 }
 function queueSubmit() {
   var st=document.getElementById('fStart').value, en=document.getElementById('fEnd').value;
-  var hm=parseFloat(document.getElementById('fHm').value), km=parseFloat(document.getElementById('fKm').value);
+  // HM & KM opsional sejak 1 Agu 2026 (input disembunyikan) — kirim apa adanya
+  var hm=document.getElementById('fHm').value, km=document.getElementById('fKm').value;
   var part=document.getElementById('fPart').value;
   if (!st||!en) { toast('Jam mulai & selesai wajib'); return; }
   if (new Date(en)<=new Date(st)) { toast('Jam selesai harus setelah mulai'); return; }
-  if (isNaN(hm)||hm<=0) { toast('Hour Meter wajib > 0'); return; }
-  if (isNaN(km)||km<=0) { toast('Kilometer wajib > 0'); return; }
   var op = { op_id:uuid(), seq:(_enqSeq++), action:'submit_work', wo_id:activeWo.id, wo_number:activeWo.wo_number,
     payload:{wo_id:activeWo.id, start_time:new Date(st).toISOString(), end_time:new Date(en).toISOString(), hour_meter:hm, kilometers:km, part_category:part},
     status:'queued', created_at:new Date().toISOString() };
@@ -909,8 +909,7 @@ function openApproveForm(woId) {
     'Target: '+fmtJamMenit(a.target_hours)+' · Aktual: '+fmtJamMenit(a.actual_hours)+
     (atl ? ' ('+esc(atl.label)+' ×'+atl.factor+')' : '')+'<br>'+
     'Unit Factor: '+(a.unit_factor||1)+' 🔒<br>'+
-    '🔧 Part: '+esc(partLabel(a.part_category))+
-    (a.hour_meter ? '<br>HM: '+esc(a.hour_meter) : '')+(a.kilometers ? ' · KM: '+esc(a.kilometers) : '')+
+    // Part/HM/KM disembunyikan di layar approval (1 Agu 2026) — 1:1 dgn web
     (a.created_by ? '<br>👤 Pembuat: '+esc(a.created_by) : '')+
     (a.keterangan ? '<br>📝 '+esc(a.keterangan) : '');
   document.getElementById('aTeam').textContent = 'Tim: '+(a.team||[]).map(function(t){return t.name;}).join(', ');
@@ -1264,8 +1263,7 @@ function renderPendingList(){
       '📍 Lokasi: '+esc(locLabel(wo.location))+'<br>'+
       'Kondisi: '+esc(wcLabel(wo.work_condition))+' · Aktual: '+fmtJamMenit(wo.actual_hours)+' · Target: '+fmtJamMenit(wo.target_hours)+'<br>'+
       'Base: '+(wo.base_points||0)+' pts · Unit Factor: '+(wo.unit_factor||1)+' 🔒<br>'+
-      '🔧 Part: '+esc(partLabel(wo.part_category))+
-      (wo.hour_meter?' · HM: '+esc(wo.hour_meter):'')+(wo.kilometers?' · KM: '+esc(wo.kilometers):'')+
+
       '<br>👥 Tim: '+teamStr(wo.team)+'</div>'+
       (wo.keterangan?'<div class="ket">📝 '+esc(wo.keterangan)+'</div>':'')+
       (function(){ var q=queuedOpFor(wo.id); return q ? queuedNote(q)
@@ -1300,7 +1298,7 @@ function renderApprovedList(){
       '<div class="cardBody"><b>'+esc(wo.component_name||'-')+'</b><br>'+
       '📍 Lokasi: '+esc(locLabel(wo.location))+'<br>'+
       'Poin: '+(wo.final_points||0)+' · Rp '+fmtIdr(wo.final_idr||0)+'<br>'+
-      'Aktual: '+fmtJamMenit(wo.actual_hours)+(wo.part_category?' · 🔧 '+esc(partLabel(wo.part_category)):'')+
+      'Aktual: '+fmtJamMenit(wo.actual_hours)+
       (wo.created_at_str?' · '+esc(wo.created_at_str):'')+'<br>'+
       '👥 Tim: '+(wo.team_names||[]).map(function(n){return esc(n);}).join(', ')+'</div>'+
       (wo.keterangan?'<div class="ket">📝 '+esc(wo.keterangan)+'</div>':'')+
