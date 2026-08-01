@@ -4,7 +4,7 @@
    ============================================================ */
 
 var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdKkYRNlbgdJCets5L-0AfufMB4_79_HzvoQkeE9aZAqkKZiXCZHXnG6Q/exec' };
-var APP_VERSION = 'v26'; // samakan dgn CACHE di sw.js tiap rilis
+var APP_VERSION = 'v35'; // samakan dgn CACHE di sw.js tiap rilis
 var S = { token:null, me:null, role:null, wos:[], refs:null, refsAt:null, pending:[], active:[], approved:[], transfers:[], monitoring:[], monitoringOverall:{}, outbox:[], lastSync:null, syncing:false, tab:'wos', appSub:'pending', showOutbox:false, crossFunc:false, timerStates:{} };
 // PERF: katalog referensi (±1400 job) berat — tarik ulang maks 1x/12 jam.
 var REFS_TTL_MS = 12*60*60*1000;

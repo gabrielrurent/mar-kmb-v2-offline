@@ -1,6 +1,6 @@
 {
-  "name": "MAR Mekanik — Laporan Kerja Offline",
-  "short_name": "MAR Mekanik",
+  "name": "MAR KMB V2 — Laporan Kerja Offline",
+  "short_name": "MAR KMB",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#F8FAFC",
