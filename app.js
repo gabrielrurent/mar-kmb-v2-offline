@@ -235,6 +235,19 @@ function obPut(item) { return idbReq('outbox','readwrite',function(s){return s.p
 function obDel(opId) { return idbReq('outbox','readwrite',function(s){return s.delete(opId);}); }
 function uuid() { return crypto.randomUUID ? crypto.randomUUID() : 'op-'+Date.now()+'-'+Math.random().toString(36).slice(2,10); }
 
+// Nomor urut antrean dalam satu sesi — pemecah seri saat created_at sama persis
+// (klik beruntun bisa jatuh di milidetik yang sama).
+var _enqSeq = 0;
+
+/** Indikator "sedang mengirim ke-n dari m" di baris info outbox. */
+function showSendProgress(idx, total, op) {
+  var el = document.getElementById('outboxInfo');
+  if (!el) return;
+  var label = op ? (opLabel(op) || '') : '';
+  el.textContent = '📤 Mengirim ' + idx + '/' + total + (label ? ' · ' + label : '') + '…';
+  el.style.color = '#1e40af';
+}
+
 /* ── API ── */
 function api(action,data,opId) {
   var body = JSON.stringify({token:S.token, action:action, data:data||{}, op_id:opId||undefined});
@@ -331,8 +344,14 @@ function requestBgSync() {
 }
 
 /* ── Sync ── */
+var _syncAgain = false;   // ada permintaan sync yang datang saat sync sedang jalan
 function syncNow(manual) {
-  if (S.syncing) return Promise.resolve();
+  // JANGAN buang permintaan ini. Dulu (dan masih terjadi di SUM sebelum diperbaiki):
+  // approve beruntun → klik ke-2 & ke-3 datang saat sync pertama masih jalan, lalu
+  // dibuang begitu saja. Snapshot antrean sudah diambil sebelum keduanya masuk, jadi
+  // hanya WO PERTAMA yang terkirim; sisanya menggantung sampai user menekan Sync
+  // manual. Tandai, lalu jalankan ulang otomatis setelah sync ini selesai.
+  if (S.syncing) { _syncAgain = true; return Promise.resolve(); }
   if (manual) requestNotifPermission();
   if (!navigator.onLine) { requestBgSync(); if (manual) toast('📴 Offline — data aman di antrean, terkirim otomatis saat ada sinyal'); renderAll(); return Promise.resolve(); }
   S.syncing = true; renderAll();
@@ -352,19 +371,35 @@ function syncNow(manual) {
     .then(function() { S.lastSync = new Date().toISOString(); subscribePush(); return kvSet('last_sync',S.lastSync); })
     .catch(function(e) { requestBgSync(); toast('⚠️ Sync gagal: '+e.message); })
     .then(function() { S.syncing = false; return refreshOutbox(); })
-    .then(renderAll);
+    .then(function() {
+      renderAll();
+      if (_syncAgain) { _syncAgain = false; return syncNow(false); }   // kirim sisa antrean
+    });
 }
 function flushOutbox() {
   var sent = 0;
   return obAll().then(function(items) {
     var queue = items.filter(function(it){return it.status==='queued'||it.status==='failed_retry';});
+    // FIFO: getAll IndexedDB terurut op_id (uuid acak) — urutannya praktis acak.
+    // Sortir manual supaya operasi dikirim sesuai urutan dibuat; kalau tidak,
+    // aksi yang seharusnya mendahului (mis. override sebelum approve WO yang sama)
+    // bisa tiba belakangan dan approver menilai angka yang sudah basi.
+    queue.sort(function(a,b){
+      var ca=String(a.created_at||''), cb=String(b.created_at||'');
+      if (ca<cb) return -1; if (ca>cb) return 1;
+      return (a.seq||0)-(b.seq||0);
+    });
+    var _total = queue.length, _idx = 0;
     var chain = Promise.resolve();
     queue.forEach(function(it) {
       chain = chain.then(function() {
+        _idx++;
+        showSendProgress(_idx, _total, it);   // "📤 Mengirim 2/5 · L1 WO-xxx"
         return api(it.action, it.payload, it.op_id).then(function(r) {
           if (r.success) { it.status='done'; it.result=r.result; sent++; }
           else { it.status='failed'; it.error=(typeof r.error==='string')?r.error:JSON.stringify(r.error); }
-          return obPut(it);
+          // Perbarui tampilan tiap item selesai — antrean panjang tidak terlihat macet.
+          return obPut(it).then(function(){ return refreshOutbox(); }).then(function(){ renderAll(); });
         }).catch(function() { return obPut(it).then(function(){throw new Error('koneksi terputus');}); });
       });
     });
@@ -499,7 +534,7 @@ function queueTransfer() {
   if (new Date(st).getTime() > Date.now()) { toast('Jam mulai tidak boleh melewati sekarang'); return; }
   var note = (document.getElementById('fTransferNote') || {value:''}).value;
 
-  var op = { op_id:uuid(), action:'request_transfer', wo_id:activeWo.id, wo_number:activeWo.wo_number,
+  var op = { op_id:uuid(), seq:(_enqSeq++), action:'request_transfer', wo_id:activeWo.id, wo_number:activeWo.wo_number,
     payload:{wo_id:activeWo.id, transfer_note:note, session_start_time:new Date(st).toISOString()},
     status:'queued', created_at:new Date().toISOString() };
 
@@ -517,7 +552,7 @@ function queueSubmit() {
   if (new Date(en)<=new Date(st)) { toast('Jam selesai harus setelah mulai'); return; }
   if (isNaN(hm)||hm<=0) { toast('Hour Meter wajib > 0'); return; }
   if (isNaN(km)||km<=0) { toast('Kilometer wajib > 0'); return; }
-  var op = { op_id:uuid(), action:'submit_work', wo_id:activeWo.id, wo_number:activeWo.wo_number,
+  var op = { op_id:uuid(), seq:(_enqSeq++), action:'submit_work', wo_id:activeWo.id, wo_number:activeWo.wo_number,
     payload:{wo_id:activeWo.id, start_time:new Date(st).toISOString(), end_time:new Date(en).toISOString(), hour_meter:hm, kilometers:km, part_category:part},
     status:'queued', created_at:new Date().toISOString() };
   obPut(op).then(refreshOutbox).then(function() {
@@ -790,7 +825,7 @@ function queueCreate(keepOpen) {
   }
   if (!team.length) { toast('Tambah minimal 1 mekanik'); return; }
   payload.team = team;
-  var op = { op_id:uuid(), action:'create_wo', payload:payload, status:'queued', created_at:new Date().toISOString(), label:'Buat WO '+sec };
+  var op = { op_id:uuid(), seq:(_enqSeq++), action:'create_wo', payload:payload, status:'queued', created_at:new Date().toISOString(), label:'Buat WO '+sec };
   obPut(op).then(refreshOutbox).then(function() {
     renderAll();
     if (keepOpen) {
@@ -825,7 +860,7 @@ function queueCancel(){
   var reason = document.getElementById('cxReason').value.trim();
   if (!reason) { toast('Isi alasan pembatalan'); return; }
   var woNum = document.getElementById('cxDesc').textContent;
-  var op = { op_id:uuid(), action:'cancel_wo', wo_id:cancelWoId, wo_number:woNum,
+  var op = { op_id:uuid(), seq:(_enqSeq++), action:'cancel_wo', wo_id:cancelWoId, wo_number:woNum,
     payload:{ wo_id:cancelWoId, reason:reason }, status:'queued', created_at:new Date().toISOString(), label:'Batal '+woNum };
   obPut(op).then(refreshOutbox).then(function(){
     closeModal('cancelModal'); closeModal('approveModal'); renderAll();
@@ -870,7 +905,7 @@ function toggleRejectSection() {
 }
 function queueApprove(level) {
   var action = level===1 ? 'approve_l1' : 'approve_l2';
-  var op = { op_id:uuid(), action:action, wo_id:activeApproval.id, wo_number:activeApproval.wo_number,
+  var op = { op_id:uuid(), seq:(_enqSeq++), action:action, wo_id:activeApproval.id, wo_number:activeApproval.wo_number,
     payload:{ wo_id:activeApproval.id, notes:document.getElementById('aNotes').value, safety_incident:document.getElementById('aSafety').checked, mtbf_status:document.getElementById('aMtbf').value },
     status:'queued', created_at:new Date().toISOString(), label:(level===1?'L1':'L2')+' '+activeApproval.wo_number };
   obPut(op).then(refreshOutbox).then(function() {
@@ -883,7 +918,7 @@ function queueReject() {
   var reason = document.getElementById('aReason').value.trim();
   if (!reason) { toast('Isi alasan reject'); return; }
   var stage = activeApproval.status==='pending_superintendent' ? 'superintendent' : 'supervisor';
-  var op = { op_id:uuid(), action:'reject', wo_id:activeApproval.id, wo_number:activeApproval.wo_number,
+  var op = { op_id:uuid(), seq:(_enqSeq++), action:'reject', wo_id:activeApproval.id, wo_number:activeApproval.wo_number,
     payload:{ wo_id:activeApproval.id, stage:stage, reason:reason },
     status:'queued', created_at:new Date().toISOString(), label:'Reject '+activeApproval.wo_number };
   obPut(op).then(refreshOutbox).then(function() {
@@ -1114,7 +1149,7 @@ function queueApproveTransfer(woId, woNumber){
   var targets = _trSelected(woId);
   if (!targets.length) { toast('Pilih minimal satu mekanik penerima'); return; }
   if (!confirm('Setujui transfer '+woNumber+' ke '+targets.length+' mekanik?\n\nJam sesi mekanik sebelumnya akan DIHITUNG, dan semua penerima dapat poin penuh.')) return;
-  var op = { op_id:uuid(), action:'approve_transfer', wo_id:woId, wo_number:woNumber,
+  var op = { op_id:uuid(), seq:(_enqSeq++), action:'approve_transfer', wo_id:woId, wo_number:woNumber,
     payload:{wo_id:woId, target_mechanic_ids:targets},
     status:'queued', created_at:new Date().toISOString() };
   obPut(op).then(refreshOutbox).then(function(){
@@ -1128,7 +1163,7 @@ function queueRejectTransfer(woId, woNumber){
   var reason = prompt('Alasan menolak transfer:');
   if (!reason || !reason.trim()) { toast('Alasan wajib diisi'); return; }
   if (!confirm('Tolak transfer '+woNumber+'?\n\nSesi kerja mekanik yang mengajukan akan HANGUS.')) return;
-  var op = { op_id:uuid(), action:'reject_transfer', wo_id:woId, wo_number:woNumber,
+  var op = { op_id:uuid(), seq:(_enqSeq++), action:'reject_transfer', wo_id:woId, wo_number:woNumber,
     payload:{wo_id:woId, reason:reason.trim()},
     status:'queued', created_at:new Date().toISOString() };
   obPut(op).then(refreshOutbox).then(function(){
