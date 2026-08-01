@@ -123,6 +123,15 @@
       <label>Spare Part</label>
       <select class="inp" id="fPart"><option value="">Tanpa Part</option><option value="baru">🆕 Baru</option><option value="repair">🔧 Repair</option><option value="kanibal">♻️ Kanibal</option></select>
       <button class="big" onclick="queueSubmit()">📮 Simpan & Antre</button>
+
+      <!-- TRANSFER WO: oper ke shift berikutnya. Jam Mulai di atas dipakai
+           sebagai awal sesi; jam berhenti ditetapkan server saat diterima.
+           Hour Meter & KM tidak diminta di sini — itu untuk WO yang selesai. -->
+      <div style="border-top:1px solid #e5e7eb;margin:14px 0 10px"></div>
+      <label>Catatan bila WO dioper ke shift berikutnya (opsional)</label>
+      <textarea class="inp" id="fTransferNote" rows="2" placeholder="cth: baut roda kiri belum kencang, tinggal torsi ulang"></textarea>
+      <button class="big" style="background:#dd6b20" onclick="queueTransfer()">🔁 Transfer ke Shift Berikutnya</button>
+
       <button class="big secondary" onclick="closeModal('submitModal')">Batal</button>
     </div>
   </div>

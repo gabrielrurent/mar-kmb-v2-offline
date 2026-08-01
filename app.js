@@ -275,7 +275,32 @@ function openSubmitForm(woId) {
   document.getElementById('fStart').value=''; document.getElementById('fEnd').value='';
   document.getElementById('fHm').value=''; document.getElementById('fKm').value='';
   document.getElementById('fPart').value='';
+  var tn = document.getElementById('fTransferNote'); if (tn) tn.value='';
   showModal('submitModal');
+}
+
+/**
+ * TRANSFER WO — oper pekerjaan ke shift berikutnya (antre offline).
+ * Jam mulai diambil dari picker Jam Mulai yang sama dengan submit; jam berhenti
+ * ditetapkan server saat permintaan benar-benar diterima. Jam sesi ini baru
+ * dihitung kalau Planner menyetujui — kalau ditolak, hangus.
+ */
+function queueTransfer() {
+  if (!activeWo) return;
+  var st = document.getElementById('fStart').value;
+  if (!st) { toast('Isi Jam Mulai dulu — dipakai menghitung sesi kerja Anda'); return; }
+  if (new Date(st).getTime() > Date.now()) { toast('Jam mulai tidak boleh melewati sekarang'); return; }
+  var note = (document.getElementById('fTransferNote') || {value:''}).value;
+
+  var op = { op_id:uuid(), action:'request_transfer', wo_id:activeWo.id, wo_number:activeWo.wo_number,
+    payload:{wo_id:activeWo.id, transfer_note:note, session_start_time:new Date(st).toISOString()},
+    status:'queued', created_at:new Date().toISOString() };
+
+  obPut(op).then(refreshOutbox).then(function() {
+    closeModal('submitModal'); renderAll();
+    toast(navigator.onLine?'📮 Mengirim permintaan transfer...':'📮 Tersimpan! Terkirim saat ada sinyal');
+    syncNow(false);
+  });
 }
 function queueSubmit() {
   var st=document.getElementById('fStart').value, en=document.getElementById('fEnd').value;
@@ -687,7 +712,9 @@ function toast(msg) {
 }
 function toggleOutboxDetail(){ S.showOutbox = !S.showOutbox; renderAll(); }
 function opLabel(o){
-  var names = {submit_work:'Submit', create_wo:'Buat WO', approve_l1:'L1', approve_l2:'L2', reject:'Reject'};
+  var names = {submit_work:'Submit', create_wo:'Buat WO', approve_l1:'L1', approve_l2:'L2', reject:'Reject',
+               cancel_wo:'Batal WO', request_transfer:'Transfer WO',
+               approve_transfer:'Setujui Transfer', reject_transfer:'Tolak Transfer'};
   var base = o.label || names[o.action] || o.action;
   if (o.wo_number && String(base).indexOf(o.wo_number)===-1) base += ' '+o.wo_number;
   return base;
