@@ -4,7 +4,7 @@
    ============================================================ */
 
 var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdKkYRNlbgdJCets5L-0AfufMB4_79_HzvoQkeE9aZAqkKZiXCZHXnG6Q/exec' };
-var APP_VERSION = 'v35'; // samakan dgn CACHE di sw.js tiap rilis
+var APP_VERSION = 'v36'; // samakan dgn CACHE di sw.js tiap rilis
 var S = { token:null, me:null, role:null, wos:[], refs:null, refsAt:null, pending:[], active:[], approved:[], transfers:[], monitoring:[], monitoringOverall:{}, outbox:[], lastSync:null, syncing:false, tab:'wos', appSub:'pending', showOutbox:false, crossFunc:false, timerStates:{} };
 // PERF: katalog referensi (±1400 job) berat — tarik ulang maks 1x/12 jam.
 var REFS_TTL_MS = 12*60*60*1000;
@@ -463,11 +463,19 @@ function pullApproved() {
 function refreshOutbox() { return obAll().then(function(o){S.outbox=o||[];}); }
 
 /* ── Login ── */
+/** Kunci tombol & tampilkan indikator selama token diperiksa ke server. */
+function setLoginLoading(on) {
+  var b = document.getElementById('btnLogin'), l = document.getElementById('loginLoading');
+  if (b) { b.disabled = !!on; b.textContent = on ? 'Memeriksa…' : 'Masuk'; }
+  if (l) l.style.display = on ? 'block' : 'none';
+}
+
 function doLogin() {
   var t = document.getElementById('tokenInput').value.trim();
   if (!t) { toast('Isi token dulu'); return; }
   requestNotifPermission(); requestPeriodicSync();
   S.token = t;
+  setLoginLoading(true);
   if (navigator.onLine) {
     api('ping').then(function(r) {
       if (r.success) {
@@ -481,9 +489,9 @@ function doLogin() {
             if (S.role !== 'mechanic') return pullRefs().catch(function(){});
           })
           .then(function() { showScreen('main'); syncNow(false); });
-      } else { toast('❌ '+(r.error||'Token ditolak')); S.token=null; }
-    }).catch(function() { saveTokenOffline(t); });
-  } else { saveTokenOffline(t); }
+      } else { setLoginLoading(false); toast('❌ '+(r.error||'Token ditolak')); S.token=null; }
+    }).catch(function() { setLoginLoading(false); saveTokenOffline(t); });
+  } else { setLoginLoading(false); saveTokenOffline(t); }
 }
 function saveTokenOffline(t) {
   kvSet('token',t).then(function() { toast('📴 Token disimpan — verifikasi saat ada sinyal'); showScreen('main'); renderAll(); });
@@ -702,20 +710,31 @@ function populateTyreUnits() {
   var units = S.refs.units || [];
   for (var i=0;i<units.length;i++) sel.innerHTML += '<option value="'+esc(units[i].unit_id)+'">'+esc(units[i].unit_name)+' ('+esc(units[i].unit_type)+')</option>';
 }
+/**
+ * Samakan bentuk unit_model sebelum dibandingkan.
+ * pull_create_refs mengirim units.unit_model SUDAH huruf kecil + trim, tapi
+ * katalog job (getJobCatalog) mengirim unit_model APA ADANYA dari sheet. Kalau
+ * sheet menulis 'Hauler' sementara unit 'hauler', tidak ada yang cocok dan
+ * dropdown Unit/Component kosong — versi web tidak kena karena menormalkan
+ * kedua sisi.
+ */
+function _nm(v) { return String(v == null ? '' : v).toLowerCase().trim(); }
+
 function populateCascadeRoot(sec) {
   var jobs = (sec==='workshop') ? (S.refs.jobs_workshop||[]) : (S.refs.jobs_field||[]);
   if (sec === 'field') {
     var validModels = {};
-    for (var j=0;j<jobs.length;j++) validModels[jobs[j].unit_model] = true;
+    for (var j=0;j<jobs.length;j++) validModels[_nm(jobs[j].unit_model)] = true;
     var sel = document.getElementById('cUnit');
     sel.innerHTML = '<option value="">-- Pilih Unit --</option>';
     var units = S.refs.units||[];
     for (var u=0;u<units.length;u++) {
-      if (!units[u].unit_model || !validModels[units[u].unit_model]) continue;
-      sel.innerHTML += '<option value="'+esc(units[u].unit_id)+'" data-model="'+esc(units[u].unit_model)+'">'+esc(units[u].unit_name)+' ('+esc(units[u].unit_type)+')</option>';
+      var um = _nm(units[u].unit_model);
+      if (!um || !validModels[um]) continue;
+      sel.innerHTML += '<option value="'+esc(units[u].unit_id)+'" data-model="'+esc(um)+'">'+esc(units[u].unit_name)+' ('+esc(units[u].unit_type)+')</option>';
     }
   } else {
-    var models = {}; for (var mj=0;mj<jobs.length;mj++) models[jobs[mj].unit_model]=true;
+    var models = {}; for (var mj=0;mj<jobs.length;mj++) models[_nm(jobs[mj].unit_model)]=true;
     var mSel = document.getElementById('cModel');
     mSel.innerHTML = '<option value="">-- Pilih Model --</option>';
     for (var mk in models) mSel.innerHTML += '<option value="'+esc(mk)+'">'+esc(mk)+'</option>';
@@ -731,7 +750,8 @@ function onCasUnitOrModel() {
   if (sec==='workshop') { model = document.getElementById('cModel').value; }
   else { var opt = document.getElementById('cUnit').options[document.getElementById('cUnit').selectedIndex]; model = opt ? (opt.getAttribute('data-model')||'') : ''; }
   var comps = {};
-  for (var i=0;i<jobs.length;i++) { if (jobs[i].unit_model===model) comps[jobs[i].component]=true; }
+  model = _nm(model);
+  for (var i=0;i<jobs.length;i++) { if (_nm(jobs[i].unit_model)===model) comps[jobs[i].component]=true; }
   var sel = document.getElementById('cCasComp');
   sel.innerHTML = '<option value="">-- Component --</option>';
   for (var c in comps) sel.innerHTML += '<option value="'+esc(c)+'">'+esc(c)+'</option>';
@@ -744,7 +764,8 @@ function onCasComp() {
   var model = sec==='workshop' ? document.getElementById('cModel').value : (document.getElementById('cUnit').options[document.getElementById('cUnit').selectedIndex]||{}).getAttribute('data-model')||'';
   var comp = document.getElementById('cCasComp').value;
   var subs = {};
-  for (var i=0;i<jobs.length;i++) { if (jobs[i].unit_model===model && jobs[i].component===comp) subs[jobs[i].sub_component]=true; }
+  model = _nm(model);
+  for (var i=0;i<jobs.length;i++) { if (_nm(jobs[i].unit_model)===model && jobs[i].component===comp) subs[jobs[i].sub_component]=true; }
   var sel = document.getElementById('cCasSub');
   sel.innerHTML = '<option value="">-- Sub Component --</option>';
   for (var s in subs) sel.innerHTML += '<option value="'+esc(s)+'">'+esc(s)+'</option>';
@@ -760,7 +781,7 @@ function onCasSub() {
   sel.innerHTML = '<option value="">-- Job --</option>';
   for (var i=0;i<jobs.length;i++) {
     var j = jobs[i];
-    if (j.unit_model===model && j.component===comp && j.sub_component===sub) {
+    if (_nm(j.unit_model)===_nm(model) && j.component===comp && j.sub_component===sub) {
       sel.innerHTML += '<option value="'+esc(j.job_id)+'" data-bp="'+j.base_point+'" data-ph="'+j.plan_hours+'">'+esc(j.job_description)+' ('+j.plan_hours+'jam · '+j.base_point+'pts)</option>';
     }
   }
@@ -1010,7 +1031,7 @@ function renderAll() {
   var on=navigator.onLine;
   document.getElementById('netDot').style.background=on?'#22c55e':'#ef4444';
   document.getElementById('netText').textContent=on?'Online':'Offline';
-  document.getElementById('syncBtn').textContent=S.syncing?'⏳':'🔄 Sync';
+  document.getElementById('syncBtn').innerHTML = S.syncing ? '<span class="spin"></span>Sync…' : '🔄 Sync';
   document.getElementById('lastSync').textContent=(S.lastSync?'Sync: '+new Date(S.lastSync).toLocaleString('id-ID'):'Belum sync')+' · '+APP_VERSION;
   document.getElementById('meName').textContent=S.me?(S.me.name||S.me.mechanic_id):'';
   // tabs

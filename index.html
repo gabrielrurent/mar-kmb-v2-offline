@@ -69,6 +69,9 @@
     .syncbar button{flex:0 0 auto}
     .chkRow{display:flex;align-items:center;gap:6px;margin:6px 0;font-size:13px;color:var(--text)}
     .chkRow input[type="checkbox"]{width:18px;height:18px;accent-color:var(--primary)}
+    /* Spinner kecil — dipakai layar login & tombol Sync (port SUM V2) */
+    .spin{display:inline-block;width:13px;height:13px;border:2px solid #BFDBFE;border-top-color:#1e40af;border-radius:50%;animation:sp .8s linear infinite;vertical-align:-2px;margin-right:5px}
+    @keyframes sp{to{transform:rotate(360deg)}}
     /* LIVE TIMER (port 1:1 dari SUM V2) */
     .timerPill{background:#EFF6FF;border:1px solid #BFDBFE;border-radius:var(--radius-sm);padding:10px;text-align:center;margin:10px 0}
     .timerClock{font-size:24px;font-weight:800;font-family:monospace;color:#1e40af}
@@ -93,7 +96,8 @@
       <h2 style="color:#111827;font-size:16px;margin-bottom:4px">Masukkan Token</h2>
       <p class="sub">Token dari admin, cukup diisi SEKALI.</p>
       <input class="inp" id="tokenInput" placeholder="token..." autocomplete="off">
-      <button class="big" onclick="doLogin()">Masuk</button>
+      <button class="big" id="btnLogin" onclick="doLogin()">Masuk</button>
+      <div id="loginLoading" style="display:none;margin-top:10px;text-align:center;font-size:13px;font-weight:700;color:#1e40af"><span class="spin"></span> Memeriksa token…</div>
     </div>
   </div>
 
