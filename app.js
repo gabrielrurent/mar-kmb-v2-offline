@@ -524,6 +524,9 @@ function openSubmitForm(woId) {
   document.getElementById('fStart').value=''; document.getElementById('fEnd').value='';
   document.getElementById('fHm').value=''; document.getElementById('fKm').value='';
   document.getElementById('fPart').value='';
+  // Tyreman: sembunyikan pilihan spare part (nilainya sudah dikosongkan di atas)
+  var _pw = document.getElementById('partWrap');
+  if (_pw) _pw.style.display = (String(activeWo.section||'').toLowerCase()==='tyreman') ? 'none' : '';
   var tn = document.getElementById('fTransferNote'); if (tn) tn.value='';
   var tsum = document.getElementById('fTimerSummary');
   if (tsum) { tsum.style.display='none'; tsum.innerHTML=''; }

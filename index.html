@@ -143,8 +143,12 @@
         <div><label>Hour Meter *</label><input type="number" class="inp" id="fHm" min="0.1" step="any" placeholder="1250"></div>
         <div><label>Kilometer *</label><input type="number" class="inp" id="fKm" min="0.1" step="any" placeholder="4500"></div>
       </div>
-      <label>Spare Part</label>
-      <select class="inp" id="fPart"><option value="">Tanpa Part</option><option value="baru">🆕 Baru</option><option value="repair">🔧 Repair</option><option value="kanibal">♻️ Kanibal</option></select>
+      <!-- Spare part tidak relevan untuk pekerjaan tyreman → disembunyikan per
+           section (lihat openSubmitForm). 1:1 dengan web. -->
+      <div id="partWrap">
+        <label>Spare Part</label>
+        <select class="inp" id="fPart"><option value="">Tanpa Part</option><option value="baru">🆕 Baru</option><option value="repair">🔧 Repair</option><option value="kanibal">♻️ Kanibal</option></select>
+      </div>
       <button class="big" onclick="queueSubmit()">📮 Simpan & Antre</button>
 
       <!-- TRANSFER WO: oper ke shift berikutnya. Jam Mulai di atas dipakai
