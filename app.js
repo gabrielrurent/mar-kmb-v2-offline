@@ -5,7 +5,7 @@
 
 var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdKkYRNlbgdJCets5L-0AfufMB4_79_HzvoQkeE9aZAqkKZiXCZHXnG6Q/exec' };
 var APP_VERSION = 'v26'; // samakan dgn CACHE di sw.js tiap rilis
-var S = { token:null, me:null, role:null, wos:[], refs:null, refsAt:null, pending:[], active:[], approved:[], transfers:[], outbox:[], lastSync:null, syncing:false, tab:'wos', appSub:'pending', showOutbox:false, crossFunc:false, timerStates:{} };
+var S = { token:null, me:null, role:null, wos:[], refs:null, refsAt:null, pending:[], active:[], approved:[], transfers:[], monitoring:[], monitoringOverall:{}, outbox:[], lastSync:null, syncing:false, tab:'wos', appSub:'pending', showOutbox:false, crossFunc:false, timerStates:{} };
 // PERF: katalog referensi (±1400 job) berat — tarik ulang maks 1x/12 jam.
 var REFS_TTL_MS = 12*60*60*1000;
 function refsStale() { return !S.refs || !S.refsAt || (Date.now() - new Date(S.refsAt).getTime() > REFS_TTL_MS); }
@@ -365,7 +365,7 @@ function syncNow(manual) {
       // WO Saya disembunyikan) — hemat 1 panggilan API per sync.
       var tasks = [];
       if (S.role === 'mechanic') { tasks.push(pullWos()); }
-      else { tasks.push(pullPending()); tasks.push(pullActive()); tasks.push(pullTransfers()); if (refsStale()) tasks.push(pullRefs()); }
+      else { tasks.push(pullPending()); tasks.push(pullActive()); tasks.push(pullTransfers()); tasks.push(pullMonitoring()); if (refsStale()) tasks.push(pullRefs()); }
       return Promise.all(tasks);
     })
     .then(function() { S.lastSync = new Date().toISOString(); subscribePush(); return kvSet('last_sync',S.lastSync); })
@@ -421,6 +421,16 @@ function pullRefs() {
     return kvSet('refs', S.refs).then(function(){ return kvSet('refs_at', S.refsAt); });
   });
 }
+/** MONITORING: ringkasan per mekanik untuk approver (difilter scope di server). */
+function pullMonitoring() {
+  return api('pull_monitoring').then(function(r) {
+    if (!r.success) return;
+    S.monitoring = (r.result && r.result.mechanics) || [];
+    S.monitoringOverall = (r.result && r.result.overall) || {};
+    return kvSet('monitoring', S.monitoring).then(function(){ return kvSet('monitoring_overall', S.monitoringOverall); });
+  });
+}
+
 /** TRANSFER WO: daftar permintaan menunggu keputusan L1 (sudah difilter scope server). */
 function pullTransfers() {
   return api('pull_transfers').then(function(r) {
@@ -491,7 +501,7 @@ function doLogout() {
   tx.objectStore('outbox').clear();
   tx.oncomplete = function() {
     // AUDIT K3: reset HARUS bentuk state lengkap — field hilang = crash setelah re-login
-    S = { token:null, me:null, role:null, wos:[], refs:null, refsAt:null, pending:[], active:[], approved:[], transfers:[], outbox:[], lastSync:null, syncing:false, tab:'wos', appSub:'pending', showOutbox:false, crossFunc:false, timerStates:{} };
+    S = { token:null, me:null, role:null, wos:[], refs:null, refsAt:null, pending:[], active:[], approved:[], transfers:[], monitoring:[], monitoringOverall:{}, outbox:[], lastSync:null, syncing:false, tab:'wos', appSub:'pending', showOutbox:false, crossFunc:false, timerStates:{} };
     showScreen('login');
   };
 }
@@ -997,6 +1007,8 @@ function renderAll() {
   document.getElementById('tabWos').className = 'tab'+(S.tab==='wos'?' active':'');
   document.getElementById('tabCreate').className = 'tab'+(S.tab==='create'?' active':'');
   document.getElementById('tabApproval').className = 'tab'+(S.tab==='approval'?' active':'');
+  document.getElementById('tabMonitor').style.display = isCreator ? '' : 'none';
+  document.getElementById('tabMonitor').className = 'tab'+(S.tab==='monitor'?' active':'');
   // outbox info — bisa diklik utk lihat WO mana yg mengantre + waktu masuk antrean
   var queued = S.outbox.filter(function(o){return o.status==='queued'||o.status==='failed_retry';});
   var oi = document.getElementById('outboxInfo');
@@ -1024,6 +1036,55 @@ function renderAll() {
   if (!isCreator || S.tab==='wos') { renderWos(content); }
   else if (S.tab==='create') { renderCreateTab(content); }
   else if (S.tab==='approval') { renderApprovalTab(content); }
+  else if (S.tab==='monitor') { renderMonitorTab(content); }
+}
+
+/* ── MONITORING (approver) — cermin halaman Monitoring di web ──
+   Menampilkan TOKEN mekanik, bukan URL, sama seperti web sejak 1 Agu 2026. */
+function renderMonitorTab(el) {
+  var mons = S.monitoring || [];
+  if (!mons.length) {
+    el.innerHTML = '<div class="empty">Belum ada data monitoring. Tekan 🔄 Sync saat ada sinyal.</div>';
+    return;
+  }
+  var ov = S.monitoringOverall || {};
+  var html = '<div class="card" style="padding:12px">'+
+    '<b>Ringkasan scope Anda</b><div class="sub" style="margin-top:4px">'+
+      '📝 Perlu diisi: <b>'+(ov.pending_mechanic_work||0)+'</b> · '+
+      '⏳ L1: <b>'+(ov.pending_l1||0)+'</b> · '+
+      '⏳ L2: <b>'+(ov.pending_l2||0)+'</b> · '+
+      '✅ Approved: <b>'+(ov.approved||0)+'</b>'+
+    '</div></div>';
+
+  html += '<div class="sub">'+mons.length+' mekanik</div>';
+  mons.forEach(function(m){
+    html += '<div class="card">'+
+      '<div class="cardTop"><b>'+esc(m.name||m.id)+'</b>'+
+        (m.section?'<span class="badge" style="background:#334155">'+esc(m.section)+'</span>':'')+
+      '</div>'+
+      '<div class="cardBody">'+esc(m.id)+'<br>'+
+        '📝 '+(m.pending_mechanic_work||0)+' · ⏳ L1 '+(m.pending_l1||0)+
+        ' · ⏳ L2 '+(m.pending_l2||0)+' · ✅ '+(m.approved||0)+
+      '</div>';
+    if (m.has_token && m.token) {
+      html += '<div style="display:flex;gap:6px;align-items:center;margin-top:8px">'+
+        '<input class="inp" style="flex:1;font-family:monospace;font-size:13px" readonly value="'+esc(m.token)+'" onclick="this.select()">'+
+        '<button class="mini" onclick="salinToken(\''+esc(m.token)+'\',this)">📋 Copy</button>'+
+      '</div>';
+    } else {
+      html += '<div class="sub" style="color:#b45309;margin-top:6px">⚠️ Belum ada token — jalankan generateMissingTokens di editor GAS.</div>';
+    }
+    html += '</div>';
+  });
+  el.innerHTML = html;
+}
+
+function salinToken(tok, btn) {
+  var semula = btn.textContent;
+  var sukses = function(){ btn.textContent='✅'; setTimeout(function(){ btn.textContent=semula; },1500); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(tok).then(sukses).catch(function(){ toast('Salin manual: '+tok); });
+  } else { toast('Salin manual: '+tok); }
 }
 function renderWos(el) {
   var opByWo={};
@@ -1236,9 +1297,9 @@ function renderApprovedList(){
 window.addEventListener('online',function(){renderAll(); syncNow(false);});
 window.addEventListener('offline',renderAll);
 openDb().then(function() {
-  return Promise.all([kvGet('token'),kvGet('me'),kvGet('wos'),kvGet('refs'),kvGet('pending'),kvGet('last_sync'),kvGet('role'),kvGet('refs_at'),kvGet('active'),kvGet('approved'),kvGet('transfers'),kvGet('timer_states')]);
+  return Promise.all([kvGet('token'),kvGet('me'),kvGet('wos'),kvGet('refs'),kvGet('pending'),kvGet('last_sync'),kvGet('role'),kvGet('refs_at'),kvGet('active'),kvGet('approved'),kvGet('transfers'),kvGet('timer_states'),kvGet('monitoring'),kvGet('monitoring_overall')]);
 }).then(function(v) {
-  S.token=v[0]||null; S.me=v[1]||null; S.wos=v[2]||[]; S.refs=v[3]||null; S.pending=v[4]||[]; S.lastSync=v[5]||null; S.role=v[6]||'mechanic'; S.refsAt=v[7]||null; S.active=v[8]||[]; S.approved=v[9]||[]; S.transfers=v[10]||[]; S.timerStates=v[11]||{};
+  S.token=v[0]||null; S.me=v[1]||null; S.wos=v[2]||[]; S.refs=v[3]||null; S.pending=v[4]||[]; S.lastSync=v[5]||null; S.role=v[6]||'mechanic'; S.refsAt=v[7]||null; S.active=v[8]||[]; S.approved=v[9]||[]; S.transfers=v[10]||[]; S.timerStates=v[11]||{}; S.monitoring=v[12]||[]; S.monitoringOverall=v[13]||{};
   return refreshOutbox();
 }).then(function() {
   if ('serviceWorker' in navigator) {
