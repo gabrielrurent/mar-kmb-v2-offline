@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v45';
+var APP_VERSION = 'v46';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -1057,7 +1057,7 @@ function openApproveForm(woId) {
     (atl ? ' ('+esc(atl.label)+' ×'+atl.factor+')' : '')+'<br>'+
     'Unit Factor: '+(a.unit_factor||1)+' 🔒<br>'+
     // Part/HM/KM disembunyikan di layar approval (1 Agu 2026) — 1:1 dgn web
-    (a.created_by ? '<br>👤 Pembuat: '+esc(a.created_by) : '')+
+    (a.created_by_name || a.created_by ? '<br>👤 Pembuat: '+esc(a.created_by_name || a.created_by) : '')+
     (a.keterangan ? '<br>📝 '+esc(a.keterangan) : '');
   document.getElementById('aTeam').textContent = 'Tim: '+(a.team||[]).map(function(t){return t.name;}).join(', ');
   document.getElementById('aStatus').textContent = 'Status: '+a.status;
@@ -1606,7 +1606,9 @@ function queuedOpFor(woId){
   return null;
 }
 function queuedNote(qop){ return '<div class="obinfo">📮 '+esc(opLabel(qop))+' — menunggu sinyal (tombol dikunci)</div>'; }
-function teamStr(team){ return (team||[]).map(function(t){ return esc(t.name)+(t.email?' <span class="sub" style="display:inline;margin:0">('+esc(t.email)+')</span>':''); }).join(', '); }
+// Nama saja — email dihilangkan dari kartu approval (1:1 dgn web). Approver
+// mengenali orang dari namanya; alamat email hanya memenuhi layar HP.
+function teamStr(team){ return (team||[]).map(function(t){ return esc(t.name); }).join(', '); }
 function ovBadges(wo){ return (wo.has_override_spv?'<span class="badge" style="background:#4338ca">SPV override</span>':'')+(wo.has_override_supt?'<span class="badge" style="background:#7c3aed">SUPT override</span>':''); }
 function cancelBtn(wo){ return '<button class="big secondary" onclick="openCancelForm(\''+esc(String(wo.id))+'\',\''+esc(String(wo.wo_number))+'\')">🗑 Batalkan WO</button>'; }
 /* ── TRANSFER WO: keputusan L1 (offline-capable) ── */
@@ -1723,7 +1725,7 @@ function renderActiveList(){
       (wo.section?'<span class="badge" style="background:#334155">'+esc(wo.section)+'</span>':'')+othersBadge+'</div>'+
       '<div class="cardBody"><b>'+esc(wo.component_name||'-')+'</b><br>'+
       '📍 Lokasi: '+esc(locLabel(wo.location))+'<br>'+
-      'Kondisi: '+esc(wcLabel(wo.work_condition))+(wo.created_by?' · Pembuat: '+esc(wo.created_by):'')+'<br>'+
+      'Kondisi: '+esc(wcLabel(wo.work_condition))+((wo.created_by_name||wo.created_by)?' · Pembuat: '+esc(wo.created_by_name||wo.created_by):'')+'<br>'+
       '👥 Tim: '+(wo.team_names||[]).map(function(n){return esc(n);}).join(', ')+'</div>'+
       (wo.keterangan?'<div class="ket">📝 '+esc(wo.keterangan)+'</div>':'')+
       (function(){ var q=queuedOpFor(wo.id); return q ? queuedNote(q) : cancelBtn(wo); })()+'</div>';
