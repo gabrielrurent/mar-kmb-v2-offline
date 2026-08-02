@@ -329,8 +329,11 @@
       <!-- 📋 Riwayat override: SIAPA mengubah APA -->
       <div id="aOvLog" class="ovLog" style="display:none"></div>
 
-      <label>Catatan</label>
-      <input class="inp" id="aNotes" placeholder="opsional">
+      <!-- Kotak "Catatan" DIHAPUS (2 Agu 2026). Isinya hanya masuk AuditLogs.details
+           sebagai JSON dan tak pernah ditampilkan di layar mana pun — approver
+           menulis alasan penting lalu terkubur. Digantikan Judgment di panel
+           Override, yang punya kolom sendiri & tampil di dashboard. Web tak pernah
+           punya kotak ini (Approval.html mengirim notes:'' mati). -->
       <div class="chkRow"><input type="checkbox" id="aSafety"><label>Safety Incident</label></div>
       <label>MTBF Judgment</label>
       <select class="inp" id="aMtbf"><option value="first_time">First Time</option><option value="redo">Redo</option></select>

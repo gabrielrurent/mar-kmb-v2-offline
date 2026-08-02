@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v42';
+var APP_VERSION = 'v43';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -1064,7 +1064,6 @@ function openApproveForm(woId) {
   var isL2 = (a.status === 'pending_superintendent');
   document.getElementById('aBtnL1').style.display = isL2 ? 'none' : 'block';
   document.getElementById('aBtnL2').style.display = isL2 ? 'block' : 'none';
-  document.getElementById('aNotes').value='';
   document.getElementById('aSafety').checked = false;
   document.getElementById('aMtbf').value = 'first_time';
   // ── Override (1:1 dgn modal "Edit Override" web) ──
@@ -1253,7 +1252,10 @@ function queueOverride() {
 function queueApprove(level) {
   var action = level===1 ? 'approve_l1' : 'approve_l2';
   var op = { op_id:uuid(), seq:(_enqSeq++), action:action, wo_id:activeApproval.id, wo_number:activeApproval.wo_number,
-    payload:{ wo_id:activeApproval.id, notes:document.getElementById('aNotes').value, safety_incident:document.getElementById('aSafety').checked, mtbf_status:document.getElementById('aMtbf').value },
+    // notes tidak lagi diketik approver (kotak Catatan dihapus). Server yang
+    // mengisinya dari judgment efektif, supaya AuditLogs tetap punya konteks
+    // tanpa approver mengetik hal yang sama dua kali.
+    payload:{ wo_id:activeApproval.id, safety_incident:document.getElementById('aSafety').checked, mtbf_status:document.getElementById('aMtbf').value },
     status:'queued', created_at:new Date().toISOString(), label:(level===1?'L1':'L2')+' '+activeApproval.wo_number };
   obPut(op).then(refreshOutbox).then(function() {
     closeModal('approveModal'); renderAll();
