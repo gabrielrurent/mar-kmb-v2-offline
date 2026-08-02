@@ -4,7 +4,25 @@
    ============================================================ */
 
 var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdKkYRNlbgdJCets5L-0AfufMB4_79_HzvoQkeE9aZAqkKZiXCZHXnG6Q/exec' };
-var APP_VERSION = 'v37'; // samakan dgn CACHE di sw.js tiap rilis
+// SATU sumber kebenaran versi: nama CACHE di sw.js. Nilai di bawah hanya
+// cadangan bila Cache API tak tersedia — saat boot, versinya DIBACA dari cache
+// service worker yang benar-benar aktif (lihat syncVersionFromCache).
+// Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
+// tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
+var APP_VERSION = 'v38';
+
+/** Baca versi dari nama cache SW yang aktif → APP_VERSION selalu jujur. */
+function syncVersionFromCache() {
+  try {
+    if (typeof caches === 'undefined' || !caches.keys) return Promise.resolve();
+    return caches.keys().then(function(keys) {
+      for (var i = 0; i < keys.length; i++) {
+        var m = /^mar-(v\d+)$/.exec(keys[i]);
+        if (m) { APP_VERSION = m[1]; break; }
+      }
+    }).catch(function(){});
+  } catch (e) { return Promise.resolve(); }
+}
 var S = { token:null, me:null, role:null, wos:[], refs:null, refsAt:null, pending:[], active:[], approved:[], transfers:[], monitoring:[], monitoringOverall:{}, outbox:[], lastSync:null, syncing:false, tab:'wos', appSub:'pending', showOutbox:false, crossFunc:false, timerStates:{} };
 // PERF: katalog referensi (±1400 job) berat — tarik ulang maks 1x/12 jam.
 var REFS_TTL_MS = 12*60*60*1000;
@@ -1352,6 +1370,7 @@ openDb().then(function() {
       if (_swReloaded) return; _swReloaded = true; window.location.reload();
     });
   }
+  syncVersionFromCache().then(function(){ showScreen(S.token?'main':'login'); renderAll(); });
   showScreen(S.token?'main':'login');
   // Timer bisa masih berjalan dari sesi sebelumnya (state tersimpan di IndexedDB)
   startTimerTicker();
