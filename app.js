@@ -9,7 +9,34 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v39';
+var APP_VERSION = 'v40';
+
+// ── Pembaruan versi otomatis ────────────────────────────────────────────────
+// sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
+// begitu TERUNDUH. Yang dulu hilang: pemicunya. register() hanya mengecek saat
+// halaman dimuat, sedangkan PWA di HP mekanik bisa berhari-hari tidak pernah
+// dinavigasi ulang — jadi mereka tertinggal di versi lama tanpa tanda apa pun.
+var _swReg = null;
+var _swReloaded = false;
+var _swPendingReload = false;
+var _swLastCheck = 0;
+var SW_CHECK_MIN_MS = 10 * 60 * 1000;   // sw.js di GitHub Pages max-age=600
+
+/** Minta browser mengecek sw.js baru. Dibatasi agar tak boros kuota. */
+function cekPembaruan(paksa) {
+  if (!_swReg || !navigator.onLine) return;
+  var now = Date.now();
+  if (!paksa && (now - _swLastCheck) < SW_CHECK_MIN_MS) return;
+  _swLastCheck = now;
+  try { _swReg.update(); } catch (e) {}
+}
+
+/** Muat ulang sekali saja — dipanggil saat SW baru mengambil alih. */
+function _lakukanReloadSW() {
+  if (_swReloaded) return;
+  _swReloaded = true;
+  window.location.reload();
+}
 
 /** Baca versi dari nama cache SW yang aktif → APP_VERSION selalu jujur. */
 function syncVersionFromCache() {
@@ -1180,14 +1207,36 @@ function discardOp(opId) {
 
 /* ── Modal ── */
 function showModal(id) { document.getElementById(id).style.display='flex'; }
-function closeModal(id) { document.getElementById(id).style.display='none'; }
+function closeModal(id) {
+  document.getElementById(id).style.display='none';
+  // Pembaruan versi yang ditahan karena modal terbuka → jalankan sekarang.
+  if (_swPendingReload && !adaModalTerbuka()) _lakukanReloadSW();
+}
+/** Ada modal yang sedang terbuka? Dipakai agar reload tak menghapus isian setengah jalan. */
+function adaModalTerbuka() {
+  var ms = document.querySelectorAll('.modal');
+  for (var i = 0; i < ms.length; i++) if (ms[i].style.display === 'flex') return true;
+  return false;
+}
 
 /* ── Render ── */
 function showScreen(nm) {
   // Versi ditampilkan di layar login — supaya saat ada keluhan, versi yang
   // dipakai bisa langsung dibaca tanpa harus masuk dulu.
   var lv = document.getElementById('loginVersion');
-  if (lv) lv.textContent = APP_VERSION;
+  if (lv) {
+    lv.textContent = APP_VERSION;
+    // Ketuk label versi = paksa cek pembaruan. Jalan keluar saat harus memandu
+    // mekanik lewat telepon: "ketuk angka versinya" — tanpa hapus cache/instal ulang.
+    lv.style.cursor = 'pointer';
+    lv.title = 'Ketuk untuk cek versi baru';
+    lv.onclick = function() {
+      if (!navigator.onLine) { toast('📴 Perlu sinyal untuk cek versi'); return; }
+      toast('🔄 Mengecek versi baru…');
+      cekPembaruan(true);
+      setTimeout(function(){ if (!_swReloaded) toast('✅ Sudah versi terbaru (' + APP_VERSION + ')'); }, 4000);
+    };
+  }
   if (nm !== 'login') setLoginLoading(false);
   // 'flex' (bukan 'block') — layar login memakai flexbox agar isinya benar-benar
   // di tengah dan tetap bisa di-scroll saat keyboard HP terbuka.
@@ -1232,7 +1281,20 @@ function renderAll() {
   document.getElementById('netDot').style.background=on?'#22c55e':'#ef4444';
   document.getElementById('netText').textContent=on?'Online':'Offline';
   document.getElementById('syncBtn').innerHTML = S.syncing ? '<span class="spin"></span>Sync…' : '🔄 Sync';
-  document.getElementById('lastSync').textContent=(S.lastSync?'Sync: '+new Date(S.lastSync).toLocaleString('id-ID'):'Belum sync')+' · '+APP_VERSION;
+  var _ls = document.getElementById('lastSync');
+  _ls.textContent=(S.lastSync?'Sync: '+new Date(S.lastSync).toLocaleString('id-ID'):'Belum sync')+' · '+APP_VERSION;
+  // Sama seperti label versi di layar login: ketuk = paksa cek pembaruan.
+  // Mekanik yang sudah login tidak pernah melihat layar login lagi.
+  if (!_ls.onclick) {
+    _ls.style.cursor = 'pointer';
+    _ls.title = 'Ketuk untuk cek versi baru';
+    _ls.onclick = function() {
+      if (!navigator.onLine) { toast('📴 Perlu sinyal untuk cek versi'); return; }
+      toast('🔄 Mengecek versi baru…');
+      cekPembaruan(true);
+      setTimeout(function(){ if (!_swReloaded) toast('✅ Sudah versi terbaru (' + APP_VERSION + ')'); }, 4000);
+    };
+  }
   document.getElementById('meName').textContent=S.me?(S.me.name||S.me.mechanic_id):'';
   // tabs
   var isCreator = S.role!=='mechanic';
@@ -1538,12 +1600,23 @@ openDb().then(function() {
   return refreshOutbox();
 }).then(function() {
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('./sw.js');
+    navigator.serviceWorker.register('./sw.js').then(function(reg) {
+      _swReg = reg;
+      cekPembaruan();                        // cek sekali saat app dibuka
+    }).catch(function(){});
     // Auto-reload SEKALI saat SW baru mengambil alih → update otomatis, user TIDAK perlu hapus cache.
-    var _swReloaded = false;
     navigator.serviceWorker.addEventListener('controllerchange', function() {
-      if (_swReloaded) return; _swReloaded = true; window.location.reload();
+      if (_swReloaded) return;
+      // Jangan buang isian yang sedang diketik: tahan sampai modal ditutup.
+      if (adaModalTerbuka()) { _swPendingReload = true; toast('⬆️ Versi baru siap — dimuat setelah jendela ini ditutup'); return; }
+      _lakukanReloadSW();
     });
+    // PWA sering dibiarkan terbuka berhari-hari tanpa navigasi — tanpa pemicu ini
+    // pengecekan versi tak pernah jalan dan HP tetap di versi lama diam-diam.
+    document.addEventListener('visibilitychange', function() {
+      if (document.visibilityState === 'visible') cekPembaruan();
+    });
+    window.addEventListener('online', cekPembaruan);
   }
   syncVersionFromCache().then(function(){ showScreen(S.token?'main':'login'); renderAll(); });
   showScreen(S.token?'main':'login');

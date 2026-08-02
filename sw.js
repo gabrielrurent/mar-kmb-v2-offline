@@ -1,7 +1,15 @@
-var CACHE = 'mar-v39';
+var CACHE = 'mar-v40';
 var ASSETS = ['./', './index.html', './app.js', './manifest.json', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', function(e) {
-  e.waitUntil(caches.open(CACHE).then(function(c){return c.addAll(ASSETS);}));
+  // cache:'reload' — WAJIB. addAll() memakai cache HTTP biasa, jadi app.js bisa
+  // terambil versi basi (GitHub Pages max-age=600) sementara nama cache sudah
+  // versi baru. Akibatnya label versi mengaku v-baru padahal kode yang jalan
+  // v-lama — persis kebohongan versi yang dulu terjadi (APP_VERSION v26 vs v34).
+  e.waitUntil(caches.open(CACHE).then(function(c) {
+    return Promise.all(ASSETS.map(function(u) {
+      return fetch(new Request(u, {cache: 'reload'})).then(function(r) { return c.put(u, r); });
+    }));
+  }));
   self.skipWaiting();
 });
 self.addEventListener('activate', function(e) {
