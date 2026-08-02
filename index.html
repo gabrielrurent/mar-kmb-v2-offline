@@ -210,7 +210,11 @@
       <div style="border-top:1px solid #e5e7eb;margin:14px 0 10px"></div>
       <label>Catatan bila WO dioper ke shift berikutnya (opsional)</label>
       <textarea class="inp" id="fTransferNote" rows="2" placeholder="cth: baut roda kiri belum kencang, tinggal torsi ulang"></textarea>
-      <button class="big" style="background:#dd6b20" onclick="queueTransfer()">🔁 Transfer ke Shift Berikutnya</button>
+      <!-- Sengaja "secondary" (garis luar), bukan oranye pekat. Yang utama adalah
+           "Simpan & Antre"; transfer hanya jalan keluar bila WO belum selesai.
+           Lebarnya tetap penuh — mekanik memencet ini pakai sarung tangan di
+           lapangan, jadi bobot visualnya yang diturunkan, bukan area sentuhnya. -->
+      <button class="big secondary" style="color:#c05621;border-color:#f6ad55" onclick="queueTransfer()">🔁 Transfer ke Shift Berikutnya</button>
 
       <button class="big secondary" onclick="closeModal('submitModal')">Batal</button>
     </div>
