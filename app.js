@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v43';
+var APP_VERSION = 'v44';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -1099,6 +1099,9 @@ function openApproveForm(woId) {
   aOvRenderTeam(a.team || []);
   document.getElementById('aReason').value='';
   document.getElementById('aRejectSection').style.display='none';
+  // Setelah SEMUA isian di-prefill — kalau dijalankan lebih awal, panel terbaca
+  // "berubah" hanya karena sebagian field belum sempat diisi.
+  perbaruiPenjagaOverride();
   showModal('approveModal');
 }
 function toggleRejectSection() {
@@ -1159,7 +1162,8 @@ function _aOvRow(selId, selName) {
   }
   // fallback: anggota tim yg tak ada di daftar refs tetap terjaga (jangan hilang senyap)
   if (selId && !found) opts = '<option value="'+esc(selId)+'" selected>'+esc(selName||selId)+'</option>' + opts;
-  div.innerHTML = '<select class="aOvSel inp">'+opts+'</select><button type="button" class="mini gray" onclick="this.parentNode.remove()">✕</button>';
+  div.innerHTML = '<select class="aOvSel inp" onchange="perbaruiPenjagaOverride()">'+opts+'</select>' +
+                  '<button type="button" class="mini gray" onclick="this.parentNode.remove();perbaruiPenjagaOverride()">✕</button>';
   return div;
 }
 function aOvRenderTeam(team) {
@@ -1167,7 +1171,10 @@ function aOvRenderTeam(team) {
   box.innerHTML='';
   (team||[]).forEach(function(t){ box.appendChild(_aOvRow(t.mechanic_id, t.name)); });
 }
-function aOvAddMember() { document.getElementById('aOvTeam').appendChild(_aOvRow('', '')); }
+function aOvAddMember() {
+  document.getElementById('aOvTeam').appendChild(_aOvRow('', ''));
+  perbaruiPenjagaOverride();
+}
 
 /** Riwayat override (siapa mengubah apa) di modal approval. */
 function renderOverrideLog(wo) {
@@ -1194,46 +1201,64 @@ function renderOverrideLog(wo) {
   box.style.display = 'block';
 }
 
-function queueOverride() {
-  var bp = document.getElementById('aOvBp').value.trim();
+/**
+ * Bandingkan isi panel override dengan nilai WO saat ini.
+ *
+ * SATU sumber kebenaran untuk DUA hal: tombol "Simpan Override" dan penjagaan
+ * tombol Approve. Kalau perhitungannya dipisah, keduanya bisa berbeda pendapat —
+ * Approve terkunci karena menganggap ada perubahan, sementara Simpan menjawab
+ * "tidak ada perubahan". Approver terjebak tanpa jalan keluar.
+ *
+ * @return {{payload:Object|null, ubah:boolean, salah:string}}
+ *   salah = pesan validasi (isi panel belum sah); ubah = beda dari nilai WO.
+ */
+function _bacaPerubahanOverride() {
+  var kosong = {payload:null, ubah:false, salah:''};
+  if (!activeApproval) return kosong;
+  var elBp = document.getElementById('aOvBp');
+  if (!elBp) return kosong;
+
+  var bp = elBp.value.trim();
   var ovS = document.getElementById('aOvStart').value;
   var ovE = document.getElementById('aOvEnd').value;
-  if ((ovS && !ovE) || (!ovS && ovE)) { toast('Isi waktu Mulai DAN Selesai'); return; }
-  if (ovS && ovE && new Date(ovE).getTime() <= new Date(ovS).getTime()) { toast('Waktu selesai harus setelah mulai'); return; }
-  // kirim hanya bila BERUBAH dari nilai WO saat ini
+  if ((ovS && !ovE) || (!ovS && ovE)) return {payload:null, ubah:true, salah:'Isi waktu Mulai DAN Selesai'};
+  if (ovS && ovE && new Date(ovE).getTime() <= new Date(ovS).getTime()) return {payload:null, ubah:true, salah:'Waktu selesai harus setelah mulai'};
+
   var timeChanged = false;
   if (ovS && ovE) {
     timeChanged = (ovS !== toDtLocal(activeApproval.start_time)) || (ovE !== toDtLocal(activeApproval.end_time));
   }
-  // target jam: jam + menit → desimal, bandingkan dgn target berlaku
   var tJam = parseInt(document.getElementById('aOvTgtJam').value, 10) || 0;
   var tMnt = parseInt(document.getElementById('aOvTgtMenit').value, 10) || 0;
-  if (tMnt > 59) { toast('Menit target maksimal 59'); return; }
+  if (tMnt > 59) return {payload:null, ubah:true, salah:'Menit target maksimal 59'};
   var tgtBaru = Math.round((tJam + tMnt/60) * 100) / 100;
   var tgtLama = Math.round((parseFloat(activeApproval.target_hours) || 0) * 100) / 100;
   var tgtChanged = (tgtBaru > 0 && tgtBaru !== tgtLama);
-  // tim dari editor
+
   var sels = document.querySelectorAll('.aOvSel');
   var team=[], seen={};
   for (var i=0;i<sels.length;i++) {
     var mid = sels[i].value;
     if (!mid) continue;
-    if (seen[mid]) { toast('Mekanik duplikat di tim override'); return; }
+    if (seen[mid]) return {payload:null, ubah:true, salah:'Mekanik duplikat di tim override'};
     seen[mid]=true; team.push({mechanic_id:mid, percentage:100}); // KMB full-point
   }
   var origIds = (activeApproval.team||[]).map(function(t){return String(t.mechanic_id);}).sort().join(',');
   var newIds = team.map(function(t){return String(t.mechanic_id);}).sort().join(',');
   var teamChanged = (newIds !== origIds);
-  if (teamChanged && team.length===0) { toast('Tim override minimal 1 mekanik'); return; }
+  if (teamChanged && team.length===0) return {payload:null, ubah:true, salah:'Tim override minimal 1 mekanik'};
+
   // judgment: dibanding nilai EFEKTIF supaya pengosongan warisan L1 oleh L2
   // terkirim sebagai penghapusan, bukan dianggap "tidak berubah"
   var jdBaru = document.getElementById('aOvJudgment').value.trim();
   var jdLama = String(activeApproval.judgment || '').trim();
   var jdChanged = (jdBaru !== jdLama);
 
-  if (bp==='' && !timeChanged && !teamChanged && !tgtChanged && !jdChanged) { toast('Tidak ada perubahan override'); return; }
+  var bpChanged = (bp !== '');
+  if (!bpChanged && !timeChanged && !teamChanged && !tgtChanged && !jdChanged) return kosong;
+
   var payload = { wo_id:activeApproval.id };
-  if (bp!=='') payload.base_points = parseFloat(bp);
+  if (bpChanged) payload.base_points = parseFloat(bp);
   if (tgtChanged) payload.target_hours = tgtBaru;
   if (timeChanged) {
     payload.start_time = new Date(ovS).toISOString();
@@ -1241,15 +1266,85 @@ function queueOverride() {
   }
   if (teamChanged) payload.team = team;
   if (jdChanged) payload.judgment = jdBaru;
+  return {payload: payload, ubah: true, salah: ''};
+}
+
+/**
+ * PENJAGAAN: selama masih ada perubahan override yang BELUM disimpan, tombol
+ * Approve dimatikan. Terlalu sering terjadi approver mengetik override/judgment
+ * lalu langsung menekan Approve — WO lolos dengan angka lama dan perubahannya
+ * hilang tanpa jejak. Ini jalur uang, jadi tak boleh dibiarkan senyap.
+ *
+ * Reject sengaja TIDAK dikunci: menolak WO membuat override tak relevan, dan
+ * mengunci Reject hanya akan menjebak approver.
+ */
+function perbaruiPenjagaOverride() {
+  var d = _bacaPerubahanOverride();
+  var perluSimpan = d.ubah;
+  var b1 = document.getElementById('aBtnL1'), b2 = document.getElementById('aBtnL2');
+  var wr = document.getElementById('aOvWarn');
+  [b1, b2].forEach(function(b) {
+    if (!b) return;
+    b.disabled = perluSimpan;
+    b.style.opacity = perluSimpan ? '.45' : '';
+    b.style.cursor = perluSimpan ? 'not-allowed' : '';
+  });
+  if (wr) {
+    if (perluSimpan) {
+      wr.style.display = 'block';
+      wr.innerHTML = d.salah
+        ? '⚠️ ' + esc(d.salah)
+        : '⚠️ Ada perubahan override yang <b>belum disimpan</b>. Tekan <b>💾 Simpan Override</b> dulu, baru Approve.';
+      // buka panelnya — tombol yang dicari harus terlihat, bukan tersembunyi di balik lipatan
+      var body = document.getElementById('ovBody');
+      if (body && body.style.display === 'none') {
+        body.style.display = 'block';
+        var ar = document.getElementById('ovArrow'); if (ar) ar.textContent = '▾';
+      }
+    } else {
+      wr.style.display = 'none';
+      wr.innerHTML = '';
+    }
+  }
+}
+
+function queueOverride() {
+  var d = _bacaPerubahanOverride();
+  if (d.salah) { toast(d.salah); return; }
+  if (!d.ubah) { toast('Tidak ada perubahan override'); return; }
+  var payload = d.payload;
   var op = { op_id:uuid(), seq:(_enqSeq++), action:'save_override', wo_id:activeApproval.id, wo_number:activeApproval.wo_number,
     payload:payload, status:'queued', created_at:new Date().toISOString(), label:'Override '+activeApproval.wo_number };
   obPut(op).then(refreshOutbox).then(function() {
+    // Selaraskan salinan lokal dgn yang BARU SAJA diantre. Tanpa ini panel tetap
+    // dianggap "belum disimpan" (isian ≠ nilai WO lama) dan Approve terkunci
+    // selamanya walau override sudah masuk antrean.
+    if (payload.base_points !== undefined) activeApproval.base_points = payload.base_points;
+    if (payload.target_hours !== undefined) activeApproval.target_hours = payload.target_hours;
+    if (payload.start_time) { activeApproval.start_time = payload.start_time; activeApproval.end_time = payload.end_time; }
+    if (payload.judgment !== undefined) activeApproval.judgment = payload.judgment;
+    if (payload.team) {
+      var mechs = (S.refs && S.refs.mechanics) || [];
+      activeApproval.team = payload.team.map(function(t) {
+        var nm = t.mechanic_id;
+        for (var m=0;m<mechs.length;m++) if (String(mechs[m].mechanic_id)===String(t.mechanic_id)) { nm = mechs[m].mechanic_name; break; }
+        return {mechanic_id: t.mechanic_id, name: nm};
+      });
+      document.getElementById('aTeam').textContent = 'Tim: '+activeApproval.team.map(function(t){return t.name;}).join(', ');
+    }
+    document.getElementById('aOvBp').value = '';   // sudah masuk base_points di atas
+    perbaruiPenjagaOverride();
     renderAll();
     toast(navigator.onLine?'📮 Override dikirim — lanjut Approve':'📮 Override tersimpan (terkirim sebelum approve)');
     syncNow(false);
   });
 }
 function queueApprove(level) {
+  // Lapis kedua penjagaan. Tombolnya sudah di-disable, tapi ini jalur uang —
+  // satu klik yang lolos berarti WO disetujui dengan angka lama dan override
+  // yang sudah diketik hilang tanpa jejak.
+  var _g = _bacaPerubahanOverride();
+  if (_g.ubah) { perbaruiPenjagaOverride(); toast(_g.salah || '⚠️ Simpan Override dulu sebelum Approve'); return; }
   var action = level===1 ? 'approve_l1' : 'approve_l2';
   var op = { op_id:uuid(), seq:(_enqSeq++), action:action, wo_id:activeApproval.id, wo_number:activeApproval.wo_number,
     // notes tidak lagi diketik approver (kotak Catatan dihapus). Server yang
