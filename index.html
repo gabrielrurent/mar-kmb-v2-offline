@@ -52,13 +52,20 @@
     .inp,select{width:100%;padding:11px;font-size:15px;background:var(--card);color:var(--text);border:1px solid var(--input-border);border-radius:var(--radius-sm);margin:4px 0 12px}
     .inp:focus,select:focus,input:focus{border-color:var(--primary);box-shadow:var(--focus-ring);outline:none}
     label{font-size:12px;color:var(--text-secondary);font-weight:600}
-    .row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    /* minmax(0,1fr) + min-width:0 WAJIB, bukan `1fr 1fr`. `1fr` = minmax(auto,1fr),
+       dan `auto` melarang track menyusut di bawah lebar min-content isinya.
+       Input datetime-local punya min-content besar (~200px), jadi dua kolomnya
+       memaksa grid lebih lebar dari layar HP — kolom "Selesai" tertimpa lalu
+       meleset keluar layar. Persoalan yang sama sudah diperbaiki di PWA SUM. */
+    .row2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+    .row2>*{min-width:0}
+    @media (max-width:520px){.row2{grid-template-columns:1fr}}
     .secPicker{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 12px}
     .secOpt input[type="radio"]{display:none}
     .secCard{display:inline-block;padding:8px 14px;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-weight:700;font-size:13px;color:var(--text-secondary);background:var(--card)}
     .secOpt input:checked+.secCard{border-color:var(--primary);background:var(--primary-soft);color:var(--primary)}
     .teamRow{display:flex;gap:6px;align-items:center;margin-bottom:6px}
-    .teamRow select{flex:1}
+    .teamRow select{flex:1;min-width:0}   /* nama mekanik panjang tak boleh melebarkan baris */
     /* Override L1/L2 — 1:1 dengan modal Edit Override di web (Approval.html) */
     .ovBox{background:var(--primary-soft);border:1px solid var(--border);border-radius:var(--radius-sm);padding:11px;margin:8px 0}
     .ovLog{background:#FFFBEB;border:1px solid #FDE68A;border-radius:var(--radius-sm);padding:10px 12px;margin:8px 0}
