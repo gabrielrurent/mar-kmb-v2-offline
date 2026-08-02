@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v38';
+var APP_VERSION = 'v39';
 
 /** Baca versi dari nama cache SW yang aktif → APP_VERSION selalu jujur. */
 function syncVersionFromCache() {
@@ -959,6 +959,37 @@ function openApproveForm(woId) {
   document.getElementById('aNotes').value='';
   document.getElementById('aSafety').checked = false;
   document.getElementById('aMtbf').value = 'first_time';
+  // ── Override (1:1 dgn modal "Edit Override" web) ──
+  document.getElementById('aOvBp').value = '';
+  var _th = parseFloat(a.target_hours) || 0;
+  document.getElementById('aOvTgtJam').value = _th ? Math.floor(_th) : '';
+  document.getElementById('aOvTgtMenit').value = _th ? Math.round((_th - Math.floor(_th)) * 60) : '';
+  document.getElementById('aOvStart').value = toDtLocal(a.start_time);
+  document.getElementById('aOvEnd').value = toDtLocal(a.end_time);
+  var _actNow = document.getElementById('aOvActualNow');
+  if (_actNow) _actNow.value = a.actual_hours ? fmtJamMenit(a.actual_hours) : '-';
+  // WO yang pernah ditransfer: picker hanya mengoreksi sesi TERAKHIR — jam sesi
+  // sebelumnya (partial_hours) tetap ditambahkan server-side, jangan bikin kaget.
+  var _ph = parseFloat(a.partial_hours) || 0;
+  var _phHint = document.getElementById('aOvPartialHint');
+  if (_ph > 0) {
+    _phHint.style.display = 'block';
+    _phHint.innerHTML = '⚠️ WO ini pernah <b>ditransfer</b>. Picker hanya mengoreksi sesi <b>terakhir</b>; ' +
+      fmtJamMenit(_ph) + ' dari sesi sebelumnya tetap ditambahkan otomatis.';
+  } else { _phHint.style.display = 'none'; _phHint.innerHTML = ''; }
+  aOvHitungDurasi();
+  // Judgment BERJENJANG: tulisan L1 diwarisi L2; L2 boleh ubah atau kosongkan.
+  var _jd = a.judgment || '';
+  document.getElementById('aOvJudgment').value = _jd;
+  var _jdSrc = document.getElementById('aOvJdSource');
+  if (_jd && isL2 && !(a.judgment_superintendent || '')) {
+    _jdSrc.style.display = 'block';
+    _jdSrc.innerHTML = '↩️ Catatan ini ditulis <b>L1</b>. Boleh diubah, atau <b>kosongkan</b> untuk menghapus.';
+  } else { _jdSrc.style.display = 'none'; _jdSrc.innerHTML = ''; }
+  var _ovB = document.getElementById('ovBody'); if (_ovB) _ovB.style.display = 'none';
+  var _ovA = document.getElementById('ovArrow'); if (_ovA) _ovA.textContent = '▸';
+  renderOverrideLog(a);
+  aOvRenderTeam(a.team || []);
   document.getElementById('aReason').value='';
   document.getElementById('aRejectSection').style.display='none';
   showModal('approveModal');
@@ -966,6 +997,150 @@ function openApproveForm(woId) {
 function toggleRejectSection() {
   var el = document.getElementById('aRejectSection');
   el.style.display = el.style.display==='none' ? 'block' : 'none';
+}
+
+// ═══ OVERRIDE L1/L2 (2 Agu 2026) ════════════════════════════════════════════
+// Wajib ada di PWA: approver KMB juga bekerja di kondisi sinyal sulit. Antrean
+// override memakai seq yang sama dengan approve → outbox FIFO menjamin override
+// tersimpan DULU, approve lalu membaca nilai efektif yang baru.
+
+/** Buka/tutup panel Override (default tertutup supaya layar approval rapi). */
+function toggleOverride() {
+  var b = document.getElementById('ovBody'), a = document.getElementById('ovArrow');
+  if (!b) return;
+  var open = b.style.display !== 'none';
+  b.style.display = open ? 'none' : 'block';
+  if (a) a.textContent = open ? '▸' : '▾';
+}
+
+/** ISO → nilai <input type="datetime-local"> (waktu lokal). */
+function toDtLocal(v) {
+  if (!v) return '';
+  var d = new Date(v);
+  if (isNaN(d.getTime())) return '';
+  function p(n){ return (n<10?'0':'')+n; }
+  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes());
+}
+
+/** Hitung & tampilkan durasi dari picker override waktu kerja. */
+function aOvHitungDurasi() {
+  var s = document.getElementById('aOvStart').value, e = document.getElementById('aOvEnd').value;
+  var box = document.getElementById('aOvDurBox'), txt = document.getElementById('aOvDurText');
+  if (!txt) return;
+  function warna(bg, br, fg){ box.style.background=bg; box.style.borderColor=br; box.style.color=fg; }
+  if (!s || !e) { txt.textContent = '-'; warna('#FFFBEB','#FDE68A','#92400E'); return; }
+  var ms = new Date(e).getTime() - new Date(s).getTime();
+  if (isNaN(ms) || ms <= 0) {
+    txt.textContent = '⚠️ Waktu selesai harus setelah waktu mulai';
+    warna('#FEF2F2','#FCA5A5','#991B1B');
+    return;
+  }
+  txt.textContent = msToJamMenit(ms) + ' (' + (Math.round((ms/3600000)*100)/100) + ' jam)';
+  warna('#FFFBEB','#FDE68A','#92400E');
+}
+
+// Editor tim override: prefilled tim saat ini; bisa tambah/kurang mekanik.
+function _aOvRow(selId, selName) {
+  var div = document.createElement('div'); div.className = 'teamRow';
+  var mechs = (S.refs && S.refs.mechanics) || [];
+  var found = false;
+  var opts = '<option value="">-- Pilih Mekanik --</option>';
+  for (var m=0;m<mechs.length;m++) {
+    var sel = (String(mechs[m].mechanic_id)===String(selId)) ? ' selected' : '';
+    if (sel) found = true;
+    opts += '<option value="'+esc(mechs[m].mechanic_id)+'"'+sel+'>'+esc(mechs[m].mechanic_name)+'</option>';
+  }
+  // fallback: anggota tim yg tak ada di daftar refs tetap terjaga (jangan hilang senyap)
+  if (selId && !found) opts = '<option value="'+esc(selId)+'" selected>'+esc(selName||selId)+'</option>' + opts;
+  div.innerHTML = '<select class="aOvSel inp">'+opts+'</select><button type="button" class="mini gray" onclick="this.parentNode.remove()">✕</button>';
+  return div;
+}
+function aOvRenderTeam(team) {
+  var box = document.getElementById('aOvTeam'); if (!box) return;
+  box.innerHTML='';
+  (team||[]).forEach(function(t){ box.appendChild(_aOvRow(t.mechanic_id, t.name)); });
+}
+function aOvAddMember() { document.getElementById('aOvTeam').appendChild(_aOvRow('', '')); }
+
+/** Riwayat override (siapa mengubah apa) di modal approval. */
+function renderOverrideLog(wo) {
+  var box = document.getElementById('aOvLog');
+  if (!box) return;
+  var list = (wo && wo.override_summary) || [];
+  if (!list.length) { box.style.display='none'; box.innerHTML=''; return; }
+  var html = '<div class="ovLogTitle">✏️ Riwayat Override</div>';
+  for (var i=0;i<list.length;i++) {
+    var ov = list[i];
+    html += '<div class="ovLogItem"><span class="ovTag '+(ov.level==='spv'?'l1':'l2')+'">'+(ov.level==='spv'?'L1':'L2')+'</span>' +
+      '<span class="ovLogWho">'+esc(ov.by_name||ov.by||'-')+'</span>' +
+      (ov.at?'<span class="ovLogTime">'+esc(fmtDateTime(ov.at))+'</span>':'') + '<ul class="ovLogList">';
+    for (var c=0;c<(ov.changes||[]).length;c++) {
+      var ch = ov.changes[c];
+      html += '<li><b>'+esc(ch.label)+'</b>: ' + (ch.from?'<span style="text-decoration:line-through;color:#9CA3AF">'+esc(ch.from)+'</span> → ':'') +
+              '<span style="color:#B45309;font-weight:700">'+esc(ch.to)+'</span></li>';
+    }
+    html += '</ul>';
+    if (ov.judgment) html += '<div class="ovJd">🗒️ '+esc(ov.judgment)+'</div>';
+    html += '</div>';
+  }
+  box.innerHTML = html;
+  box.style.display = 'block';
+}
+
+function queueOverride() {
+  var bp = document.getElementById('aOvBp').value.trim();
+  var ovS = document.getElementById('aOvStart').value;
+  var ovE = document.getElementById('aOvEnd').value;
+  if ((ovS && !ovE) || (!ovS && ovE)) { toast('Isi waktu Mulai DAN Selesai'); return; }
+  if (ovS && ovE && new Date(ovE).getTime() <= new Date(ovS).getTime()) { toast('Waktu selesai harus setelah mulai'); return; }
+  // kirim hanya bila BERUBAH dari nilai WO saat ini
+  var timeChanged = false;
+  if (ovS && ovE) {
+    timeChanged = (ovS !== toDtLocal(activeApproval.start_time)) || (ovE !== toDtLocal(activeApproval.end_time));
+  }
+  // target jam: jam + menit → desimal, bandingkan dgn target berlaku
+  var tJam = parseInt(document.getElementById('aOvTgtJam').value, 10) || 0;
+  var tMnt = parseInt(document.getElementById('aOvTgtMenit').value, 10) || 0;
+  if (tMnt > 59) { toast('Menit target maksimal 59'); return; }
+  var tgtBaru = Math.round((tJam + tMnt/60) * 100) / 100;
+  var tgtLama = Math.round((parseFloat(activeApproval.target_hours) || 0) * 100) / 100;
+  var tgtChanged = (tgtBaru > 0 && tgtBaru !== tgtLama);
+  // tim dari editor
+  var sels = document.querySelectorAll('.aOvSel');
+  var team=[], seen={};
+  for (var i=0;i<sels.length;i++) {
+    var mid = sels[i].value;
+    if (!mid) continue;
+    if (seen[mid]) { toast('Mekanik duplikat di tim override'); return; }
+    seen[mid]=true; team.push({mechanic_id:mid, percentage:100}); // KMB full-point
+  }
+  var origIds = (activeApproval.team||[]).map(function(t){return String(t.mechanic_id);}).sort().join(',');
+  var newIds = team.map(function(t){return String(t.mechanic_id);}).sort().join(',');
+  var teamChanged = (newIds !== origIds);
+  if (teamChanged && team.length===0) { toast('Tim override minimal 1 mekanik'); return; }
+  // judgment: dibanding nilai EFEKTIF supaya pengosongan warisan L1 oleh L2
+  // terkirim sebagai penghapusan, bukan dianggap "tidak berubah"
+  var jdBaru = document.getElementById('aOvJudgment').value.trim();
+  var jdLama = String(activeApproval.judgment || '').trim();
+  var jdChanged = (jdBaru !== jdLama);
+
+  if (bp==='' && !timeChanged && !teamChanged && !tgtChanged && !jdChanged) { toast('Tidak ada perubahan override'); return; }
+  var payload = { wo_id:activeApproval.id };
+  if (bp!=='') payload.base_points = parseFloat(bp);
+  if (tgtChanged) payload.target_hours = tgtBaru;
+  if (timeChanged) {
+    payload.start_time = new Date(ovS).toISOString();
+    payload.end_time = new Date(ovE).toISOString();
+  }
+  if (teamChanged) payload.team = team;
+  if (jdChanged) payload.judgment = jdBaru;
+  var op = { op_id:uuid(), seq:(_enqSeq++), action:'save_override', wo_id:activeApproval.id, wo_number:activeApproval.wo_number,
+    payload:payload, status:'queued', created_at:new Date().toISOString(), label:'Override '+activeApproval.wo_number };
+  obPut(op).then(refreshOutbox).then(function() {
+    renderAll();
+    toast(navigator.onLine?'📮 Override dikirim — lanjut Approve':'📮 Override tersimpan (terkirim sebelum approve)');
+    syncNow(false);
+  });
 }
 function queueApprove(level) {
   var action = level===1 ? 'approve_l1' : 'approve_l2';
@@ -1027,7 +1202,7 @@ function toast(msg) {
 function toggleOutboxDetail(){ S.showOutbox = !S.showOutbox; renderAll(); }
 function opLabel(o){
   var names = {submit_work:'Submit', create_wo:'Buat WO', approve_l1:'L1', approve_l2:'L2', reject:'Reject',
-               cancel_wo:'Batal WO', request_transfer:'Transfer WO',
+               cancel_wo:'Batal WO', request_transfer:'Transfer WO', save_override:'Override',
                approve_transfer:'Setujui Transfer', reject_transfer:'Tolak Transfer'};
   var base = o.label || names[o.action] || o.action;
   if (o.wo_number && String(base).indexOf(o.wo_number)===-1) base += ' '+o.wo_number;
