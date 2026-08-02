@@ -1,4 +1,4 @@
-var CACHE = 'mar-v40';
+var CACHE = 'mar-v41';
 var ASSETS = ['./', './index.html', './app.js', './manifest.json', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', function(e) {
   // cache:'reload' — WAJIB. addAll() memakai cache HTTP biasa, jadi app.js bisa
@@ -168,6 +168,10 @@ self.addEventListener('fetch', function(e) {
   if (e.request.method !== 'GET') return;
   var url = new URL(e.request.url);
   if (url.origin !== self.location.origin) return;
+  // Permintaan ber-query (mis. cek versi './sw.js?cek=<timestamp>') SELALU unik,
+  // jadi kalau ikut disimpan, cache menggelembung tanpa batas — satu entri baru
+  // tiap kali tombol Versi ditekan. Lewatkan saja ke jaringan.
+  if (url.search) return;
   e.respondWith(
     caches.match(e.request).then(function(hit) {
       if (hit) return hit;

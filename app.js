@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v40';
+var APP_VERSION = 'v41';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -36,6 +36,87 @@ function _lakukanReloadSW() {
   if (_swReloaded) return;
   _swReloaded = true;
   window.location.reload();
+}
+
+// ── Tombol "⬆️ Versi": lihat versi terpasang vs server, lalu perbarui paksa ──
+// Versi server dibaca dari sw.js (var CACHE = 'mar-vNN') dengan pembatal cache,
+// jadi tak perlu file versi terpisah yang bisa lupa di-bump.
+var _vServer = null;
+
+function bacaVersiServer() {
+  var url = './sw.js?cek=' + Date.now();
+  return fetch(url, {cache: 'no-store'}).then(function(r){ return r.text(); }).then(function(t) {
+    var m = t.match(/var CACHE = '(mar-v\d+)'/);
+    return m ? m[1].replace('mar-', '') : null;
+  });
+}
+
+function bukaCekVersi() {
+  document.getElementById('vTerpasang').textContent = APP_VERSION;
+  document.getElementById('vServer').textContent = 'mengecek…';
+  document.getElementById('vBtnUpdate').style.display = 'none';
+  document.getElementById('vCatatan').style.display = 'none';
+  _setVStatus('⏳ Mengecek…', '#F3F4F6', '#374151');
+  showModal('versiModal');
+
+  if (!navigator.onLine) {
+    document.getElementById('vServer').textContent = '-';
+    _setVStatus('📴 Tidak ada sinyal — sambungkan dulu untuk cek versi', '#FEF2F2', '#991B1B');
+    return;
+  }
+  bacaVersiServer().then(function(v) {
+    _vServer = v;
+    document.getElementById('vServer').textContent = v || '?';
+    if (!v) { _setVStatus('⚠️ Gagal membaca versi server', '#FEF2F2', '#991B1B'); return; }
+    if (v === APP_VERSION) {
+      _setVStatus('✅ Sudah versi terbaru', '#ECFDF5', '#065F46');
+    } else {
+      _setVStatus('⬆️ Versi baru tersedia: ' + v, '#FFFBEB', '#92400E');
+      document.getElementById('vBtnUpdate').style.display = 'block';
+      document.getElementById('vCatatan').style.display = 'block';
+    }
+  }).catch(function() {
+    document.getElementById('vServer').textContent = '?';
+    _setVStatus('⚠️ Gagal menghubungi server', '#FEF2F2', '#991B1B');
+  });
+}
+
+function _setVStatus(teks, bg, fg) {
+  var el = document.getElementById('vStatus');
+  el.textContent = teks; el.style.background = bg; el.style.color = fg;
+}
+
+/**
+ * Perbarui paksa: hapus SELURUH cache aplikasi lalu muat ulang.
+ * AMAN untuk antrean — outbox ada di IndexedDB, bukan Cache Storage; yang
+ * dihapus hanya berkas aplikasi (html/js/ikon) yang toh diunduh ulang.
+ * Karena itu juga wajib online: menghapus cache saat offline akan membuat
+ * aplikasi tak bisa dibuka sama sekali.
+ */
+function perbaruiSekarang() {
+  if (!navigator.onLine) { toast('📴 Perlu sinyal untuk memperbarui'); return; }
+  var btn = document.getElementById('vBtnUpdate');
+  btn.disabled = true; btn.textContent = '⏳ Memperbarui…';
+  _setVStatus('⏳ Mengunduh versi baru…', '#FFFBEB', '#92400E');
+
+  var langkah = Promise.resolve();
+  if (window.caches && caches.keys) {
+    langkah = caches.keys().then(function(keys) {
+      return Promise.all(keys.map(function(k){ return caches.delete(k); }));
+    }).catch(function(){});
+  }
+  langkah.then(function() {
+    // Daftarkan ulang SW supaya install() berjalan & mengisi cache versi baru.
+    if (_swReg && _swReg.update) { try { return _swReg.update(); } catch (e) {} }
+  }).then(function() {
+    // Reload tanpa menunggu controllerchange — cache sudah kosong, jadi berkas
+    // pasti diambil dari jaringan (fetch handler jatuh ke network saat cache miss).
+    _swReloaded = true;
+    setTimeout(function(){ window.location.reload(); }, 600);
+  }).catch(function() {
+    btn.disabled = false; btn.textContent = '⬇️ Perbarui Sekarang';
+    _setVStatus('⚠️ Gagal memperbarui — coba lagi', '#FEF2F2', '#991B1B');
+  });
 }
 
 /** Baca versi dari nama cache SW yang aktif → APP_VERSION selalu jujur. */
@@ -1226,16 +1307,11 @@ function showScreen(nm) {
   var lv = document.getElementById('loginVersion');
   if (lv) {
     lv.textContent = APP_VERSION;
-    // Ketuk label versi = paksa cek pembaruan. Jalan keluar saat harus memandu
-    // mekanik lewat telepon: "ketuk angka versinya" — tanpa hapus cache/instal ulang.
+    // Ketuk label versi = buka layar Cek Versi. Mekanik yang belum login pun
+    // bisa memperbarui sendiri tanpa dipandu hapus cache lewat telepon.
     lv.style.cursor = 'pointer';
-    lv.title = 'Ketuk untuk cek versi baru';
-    lv.onclick = function() {
-      if (!navigator.onLine) { toast('📴 Perlu sinyal untuk cek versi'); return; }
-      toast('🔄 Mengecek versi baru…');
-      cekPembaruan(true);
-      setTimeout(function(){ if (!_swReloaded) toast('✅ Sudah versi terbaru (' + APP_VERSION + ')'); }, 4000);
-    };
+    lv.title = 'Ketuk untuk cek versi';
+    lv.onclick = bukaCekVersi;
   }
   if (nm !== 'login') setLoginLoading(false);
   // 'flex' (bukan 'block') — layar login memakai flexbox agar isinya benar-benar
@@ -1281,20 +1357,7 @@ function renderAll() {
   document.getElementById('netDot').style.background=on?'#22c55e':'#ef4444';
   document.getElementById('netText').textContent=on?'Online':'Offline';
   document.getElementById('syncBtn').innerHTML = S.syncing ? '<span class="spin"></span>Sync…' : '🔄 Sync';
-  var _ls = document.getElementById('lastSync');
-  _ls.textContent=(S.lastSync?'Sync: '+new Date(S.lastSync).toLocaleString('id-ID'):'Belum sync')+' · '+APP_VERSION;
-  // Sama seperti label versi di layar login: ketuk = paksa cek pembaruan.
-  // Mekanik yang sudah login tidak pernah melihat layar login lagi.
-  if (!_ls.onclick) {
-    _ls.style.cursor = 'pointer';
-    _ls.title = 'Ketuk untuk cek versi baru';
-    _ls.onclick = function() {
-      if (!navigator.onLine) { toast('📴 Perlu sinyal untuk cek versi'); return; }
-      toast('🔄 Mengecek versi baru…');
-      cekPembaruan(true);
-      setTimeout(function(){ if (!_swReloaded) toast('✅ Sudah versi terbaru (' + APP_VERSION + ')'); }, 4000);
-    };
-  }
+  document.getElementById('lastSync').textContent=(S.lastSync?'Sync: '+new Date(S.lastSync).toLocaleString('id-ID'):'Belum sync')+' · '+APP_VERSION;
   document.getElementById('meName').textContent=S.me?(S.me.name||S.me.mechanic_id):'';
   // tabs
   var isCreator = S.role!=='mechanic';
