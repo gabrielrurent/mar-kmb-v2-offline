@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v46';
+var APP_VERSION = 'v47';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -105,6 +105,12 @@ function perbaruiSekarang() {
       return Promise.all(keys.map(function(k){ return caches.delete(k); }));
     }).catch(function(){});
   }
+  // Menghapus Cache Storage TIDAK menyentuh IndexedDB, tempat daftar mekanik &
+  // unit disimpan — itu sebabnya dulu naik versi tak membuat orang baru muncul.
+  // Cukup lupakan STEMPEL WAKTU-nya supaya refs ditarik ulang saat sync
+  // berikutnya. JANGAN hapus store lain: outbox ada di sana, dan antrean kerja
+  // yang belum terkirim tidak boleh ikut hilang.
+  langkah = langkah.then(function(){ return kvSet('refs_at', null).catch(function(){}); }).catch(function(){});
   langkah.then(function() {
     // Daftarkan ulang SW supaya install() berjalan & mengisi cache versi baru.
     if (_swReg && _swReg.update) { try { return _swReg.update(); } catch (e) {} }
@@ -133,7 +139,13 @@ function syncVersionFromCache() {
 }
 var S = { token:null, me:null, role:null, wos:[], refs:null, refsAt:null, pending:[], active:[], approved:[], transfers:[], monitoring:[], monitoringOverall:{}, outbox:[], lastSync:null, syncing:false, tab:'wos', appSub:'pending', showOutbox:false, crossFunc:false, timerStates:{} };
 // PERF: katalog referensi (±1400 job) berat — tarik ulang maks 1x/12 jam.
-var REFS_TTL_MS = 12*60*60*1000;
+// Ambang "referensi sudah basi" untuk sync OTOMATIS. Dulu 12 jam: menambah
+// mekanik baru di spreadsheet baru muncul di HP keesokan harinya, dan tak ada
+// cara mempercepatnya — refs disimpan di IndexedDB, jadi muat ulang halaman
+// maupun naik versi (yang hanya menghapus Cache Storage) sama sekali tak
+// menyentuhnya. Sync MANUAL kini selalu menarik ulang; angka ini tinggal jaring
+// pengaman untuk yang tak pernah menekan Sync.
+var REFS_TTL_MS = 30*60*1000;
 function refsStale() { return !S.refs || !S.refsAt || (Date.now() - new Date(S.refsAt).getTime() > REFS_TTL_MS); }
 var db = null;
 
@@ -489,9 +501,14 @@ function syncNow(manual) {
       }
       // PERF/R2: mekanik tarik WO-nya; approver TIDAK perlu pull_my_wos (tab
       // WO Saya disembunyikan) — hemat 1 panggilan API per sync.
+      // Sync MANUAL selalu menarik referensi (daftar mekanik, unit, katalog job),
+      // mengabaikan TTL. Menekan tombol Sync artinya "saya mau data terbaru
+      // SEKARANG" — biasanya justru sesudah menambah orang baru di spreadsheet.
+      // Sync otomatis tetap patuh TTL supaya tidak boros kuota.
+      var perluRefs = manual || refsStale();
       var tasks = [];
-      if (S.role === 'mechanic') { tasks.push(pullWos()); }
-      else { tasks.push(pullPending()); tasks.push(pullActive()); tasks.push(pullTransfers()); tasks.push(pullMonitoring()); if (refsStale()) tasks.push(pullRefs()); }
+      if (S.role === 'mechanic') { tasks.push(pullWos()); if (perluRefs) tasks.push(pullRefs()); }
+      else { tasks.push(pullPending()); tasks.push(pullActive()); tasks.push(pullTransfers()); tasks.push(pullMonitoring()); if (perluRefs) tasks.push(pullRefs()); }
       return Promise.all(tasks);
     })
     .then(function() { S.lastSync = new Date().toISOString(); subscribePush(); return kvSet('last_sync',S.lastSync); })
