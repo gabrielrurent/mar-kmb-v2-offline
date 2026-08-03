@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v48';
+var APP_VERSION = 'v49';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -774,8 +774,12 @@ function onCompChange() {
   document.getElementById('cTyreUnit').parentNode.style.display = isOthers ? 'none' : 'block';
   updateCreatePreview();
 }
+/** Poin & target jam saat membuat WO: hanya L2. 1:1 dgn web (BOLEH_LIHAT_POIN). */
+function bolehLihatPoin(){ return S.role === 'superintendent'; }
+
 function updateCreatePreview(){
   var box=document.getElementById('cPreview'); if(!box) return;
+  if(!bolehLihatPoin()){ box.style.display='none'; return; }
   var sec=getCreateSection();
   var ocEl=document.getElementById('cOthersCheck');
   var isOthers = ocEl && ocEl.checked;
@@ -929,7 +933,10 @@ function onCasSub() {
   for (var i=0;i<jobs.length;i++) {
     var j = jobs[i];
     if (_nm(j.unit_model)===_nm(model) && j.component===comp && j.sub_component===sub) {
-      sel.innerHTML += '<option value="'+esc(j.job_id)+'" data-bp="'+j.base_point+'" data-ph="'+j.plan_hours+'">'+esc(j.job_description)+' ('+j.plan_hours+'jam · '+j.base_point+'pts)</option>';
+      // Angka jam & poin hanya untuk L2 — mekanik dan L1 memilih pekerjaan
+      // berdasarkan APA yang dikerjakan, bukan berapa nilainya. data-bp/data-ph
+      // tetap dikirim (dipakai saat submit); yang disembunyikan hanya labelnya.
+      sel.innerHTML += '<option value="'+esc(j.job_id)+'" data-bp="'+j.base_point+'" data-ph="'+j.plan_hours+'">'+esc(j.job_description)+(bolehLihatPoin()?' ('+j.plan_hours+'jam · '+j.base_point+'pts)':'')+'</option>';
     }
   }
 }
