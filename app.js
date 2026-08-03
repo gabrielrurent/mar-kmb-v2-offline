@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v47';
+var APP_VERSION = 'v48';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -820,8 +820,12 @@ function onCreateSectionChange() {
   var isWs = (sec === 'workshop');
   // reset Others state
   document.getElementById('cOthersWrap').style.display = 'none';
+  // Others via centang di SEMUA section — TAPI hanya untuk approver. Di WO Others
+  // pembuatnya mengetik base_points & target_hours sendiri, dan itu jalur uang.
+  // Ini sekadar menyembunyikan; penegakannya di createWorkOrder (server).
+  var bolehOthers = (S.role !== 'mechanic');
   var othersCheckRow = document.getElementById('cOthersCheckRow');
-  if (othersCheckRow) othersCheckRow.style.display = 'block'; // Others via centang di SEMUA section
+  if (othersCheckRow) othersCheckRow.style.display = bolehOthers ? 'block' : 'none';
   var othersCheck = document.getElementById('cOthersCheck');
   if (othersCheck) othersCheck.checked = false;
   document.getElementById('cTyreGroup').style.display = isTyre ? 'block' : 'none';
@@ -1065,7 +1069,7 @@ function openApproveForm(woId) {
   var a = activeApproval;
   document.getElementById('aTitle').textContent = a.wo_number;
   var atl = a.timeliness;
-  document.getElementById('aDesc').innerHTML = '<b>'+esc(a.component_name||'-')+'</b>'+(a.is_others?' <span class="badge" style="background:#0ea5e9">OTHERS</span>':'')+'<br>'+
+  document.getElementById('aDesc').innerHTML = '<b>'+esc(a.component_name||'-')+'</b>'+(a.is_others?' <span class="badge" style="background:#0ea5e9">OTHERS</span>':'')+byMechBadge(a)+'<br>'+
     (a.unit_name?'🚜 '+esc(a.unit_name)+'<br>':'')+
     '📍 Lokasi: '+esc(locLabel(a.location))+'<br>'+
     'Kondisi: '+esc(wcLabel(a.work_condition))+'<br>'+
@@ -1474,15 +1478,22 @@ function renderAll() {
   document.getElementById('lastSync').textContent=(S.lastSync?'Sync: '+new Date(S.lastSync).toLocaleString('id-ID'):'Belum sync')+' · '+APP_VERSION;
   document.getElementById('meName').textContent=S.me?(S.me.name||S.me.mechanic_id):'';
   // tabs
-  var isCreator = S.role!=='mechanic';
+  // Sejak 3 Agu 2026 mekanik juga boleh membuat WO, jadi tab bar tampil untuk
+  // SEMUA peran. Yang membedakan tinggal isi tabnya.
+  var isApprover = S.role!=='mechanic';
   // L1/L2 (approver): sembunyikan tab "WO Saya" — hanya Buat WO + Approval
-  if (isCreator && S.tab==='wos') S.tab='approval';
-  document.getElementById('tabBar').style.display = isCreator ? 'flex' : 'none';
-  document.getElementById('tabWos').style.display = isCreator ? 'none' : '';
+  if (isApprover && S.tab==='wos') S.tab='approval';
+  document.getElementById('tabBar').style.display = 'flex';
+  document.getElementById('tabWos').style.display = isApprover ? 'none' : '';
+  // Mekanik hanya WO Saya + Buat WO. Approval & Monitoring tetap milik approver;
+  // kalau tab tersimpan dari sesi sebelumnya, kembalikan supaya tak terdampar
+  // di layar kosong.
+  if (!isApprover && (S.tab==='approval' || S.tab==='monitor')) S.tab='wos';
   document.getElementById('tabWos').className = 'tab'+(S.tab==='wos'?' active':'');
   document.getElementById('tabCreate').className = 'tab'+(S.tab==='create'?' active':'');
+  document.getElementById('tabApproval').style.display = isApprover ? '' : 'none';
   document.getElementById('tabApproval').className = 'tab'+(S.tab==='approval'?' active':'');
-  document.getElementById('tabMonitor').style.display = isCreator ? '' : 'none';
+  document.getElementById('tabMonitor').style.display = isApprover ? '' : 'none';
   document.getElementById('tabMonitor').className = 'tab'+(S.tab==='monitor'?' active':'');
   // outbox info — bisa diklik utk lihat WO mana yg mengantre + waktu masuk antrean
   var queued = S.outbox.filter(function(o){return o.status==='queued'||o.status==='failed_retry';});
@@ -1508,10 +1519,10 @@ function renderAll() {
   document.getElementById('failedOps').innerHTML = failHtml;
   // content
   var content = document.getElementById('content');
-  if (!isCreator || S.tab==='wos') { renderWos(content); }
-  else if (S.tab==='create') { renderCreateTab(content); }
+  if (S.tab==='create') { renderCreateTab(content); }
   else if (S.tab==='approval') { renderApprovalTab(content); }
   else if (S.tab==='monitor') { renderMonitorTab(content); }
+  else { renderWos(content); }   // 'wos' + jaring pengaman bila S.tab tak dikenal
 }
 
 /* ── MONITORING (approver) — cermin halaman Monitoring di web ──
@@ -1627,6 +1638,10 @@ function queuedNote(qop){ return '<div class="obinfo">📮 '+esc(opLabel(qop))+'
 // mengenali orang dari namanya; alamat email hanya memenuhi layar HP.
 function teamStr(team){ return (team||[]).map(function(t){ return esc(t.name); }).join(', '); }
 function ovBadges(wo){ return (wo.has_override_spv?'<span class="badge" style="background:#4338ca">SPV override</span>':'')+(wo.has_override_supt?'<span class="badge" style="background:#7c3aed">SUPT override</span>':''); }
+/* Penanda telaah, bukan status: WO yang dibuat mekanik sendiri perlu diperiksa
+   lebih teliti (job, unit, susunan tim) daripada buatan sesama approver.
+   1:1 dengan badge di web (Approval.html). */
+function byMechBadge(wo){ return wo.created_by_is_mechanic ? '<span class="badge" style="background:#6d28d9">👷 Dibuat Mekanik</span>' : ''; }
 function cancelBtn(wo){ return '<button class="big secondary" onclick="openCancelForm(\''+esc(String(wo.id))+'\',\''+esc(String(wo.wo_number))+'\')">🗑 Batalkan WO</button>'; }
 /* ── TRANSFER WO: keputusan L1 (offline-capable) ── */
 function renderTransferList(){
@@ -1720,7 +1735,7 @@ function renderPendingList(){
     var tl = wo.timeliness;
     var tlBadge = tl ? '<span class="badge" style="background:'+(tl.status==='on_time'?'#15803d':tl.status==='late'?'#b45309':'#b91c1c')+'">⏱️ '+esc(tl.label)+' ×'+tl.factor+'</span>' : '';
     html+='<div class="card"><div class="cardTop"><b>'+esc(wo.wo_number)+'</b><span class="badge" style="background:'+(isL2?'#b45309':'#7c3aed')+'">'+(isL2?'⏳ L2':'⏳ L1')+'</span>'+
-      '<span class="badge" style="background:#334155">'+esc(wo.section)+'</span>'+othersBadge+tlBadge+ovBadges(wo)+'</div>'+
+      '<span class="badge" style="background:#334155">'+esc(wo.section)+'</span>'+othersBadge+tlBadge+ovBadges(wo)+byMechBadge(wo)+'</div>'+
       '<div class="cardBody"><b>'+esc(wo.component_name||'-')+'</b>'+(wo.unit_name?' · '+esc(wo.unit_name):'')+'<br>'+
       '📍 Lokasi: '+esc(locLabel(wo.location))+'<br>'+
       'Kondisi: '+esc(wcLabel(wo.work_condition))+' · Aktual: '+fmtJamMenit(wo.actual_hours)+' · Target: '+fmtJamMenit(wo.target_hours)+'<br>'+
