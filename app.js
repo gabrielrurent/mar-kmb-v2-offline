@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v49';
+var APP_VERSION = 'v50';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -1590,7 +1590,8 @@ function renderWos(el) {
     html+='<div class="card"><div class="cardTop"><b>'+esc(wo.wo_number)+'</b><span class="badge" style="background:'+b[1]+'">'+b[0]+'</span>'+
       (wo.is_others?'<span class="badge" style="background:#0ea5e9">OTHERS</span>':'')+'</div>'+
       '<div class="cardBody"><b>'+esc(wo.component_name||'-')+'</b>'+(wo.unit_name?' · '+esc(wo.unit_name):'')+(wo.target_hours?' · Target: '+fmtJamMenit(wo.target_hours):'')+'<br>'+
-      '📍 '+esc(locLabel(wo.location))+' · Kondisi: '+esc(wcLabel(wo.work_condition))+'</div>'+
+      '📍 '+esc(locLabel(wo.location))+' · Kondisi: '+esc(wcLabel(wo.work_condition))+
+      timKerjaStr(wo.team)+'</div>'+
       (wo.keterangan?'<div class="ket">📝 '+esc(wo.keterangan)+'</div>':'')+
       (canFill?_timerControls(wo):'')+
       (canFill?'<button class="big" onclick="openSubmitWithTimer(\''+esc(String(wo.id))+'\')">✍️ Isi & Kirim</button>':'')+
@@ -1598,6 +1599,27 @@ function renderWos(el) {
   });
   el.innerHTML=html;
 }
+/**
+ * Susunan tim di kartu WO mekanik. Dirinya sendiri ditandai "(Anda)" dan
+ * ditebalkan — di WO beranggota banyak, mekanik harus bisa menemukan dirinya
+ * sekali lihat tanpa mengeja daftar nama.
+ * Namanya tetap ditampilkan, bukan diganti "Anda" saja: saat WO dibicarakan
+ * berdua di lapangan, nama itu yang dipakai menyebut satu sama lain.
+ */
+function timKerjaStr(team) {
+  if (!team || !team.length) return '';
+  var bagian = team.map(function(t) {
+    return t.is_me
+      ? '<b style="color:var(--primary)">'+esc(t.name)+' (Anda)</b>'
+      : esc(t.name);
+  });
+  // Diri sendiri didahulukan supaya selalu terbaca lebih dulu
+  var urut = team.map(function(t,i){ return {s:bagian[i], me:t.is_me}; })
+                 .sort(function(a,b){ return (b.me?1:0)-(a.me?1:0); })
+                 .map(function(x){ return x.s; });
+  return '<br>👥 '+(team.length===1 ? 'Dikerjakan: ' : 'Tim ('+team.length+'): ')+urut.join(', ');
+}
+
 function renderCreateTab(el) {
   if (!S.refs) { el.innerHTML='<div class="empty">Tekan 🔄 Sync untuk memuat data referensi.</div>'; return; }
   el.innerHTML='<button class="big" onclick="openCreateForm()" style="margin-bottom:12px">➕ Buat Work Order Baru</button>'+
