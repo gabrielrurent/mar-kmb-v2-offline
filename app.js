@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v53';
+var APP_VERSION = 'v54';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -1805,7 +1805,10 @@ function renderWos(el) {
   S.wos.forEach(function(wo) {
     var g = String(wo.wo_group_id || '');
     var kunci = g || ('__solo__' + wo.id);
-    if (!indeks[kunci]) { indeks[kunci] = grup.length; grup.push({id: g, mode: wo.wo_group_mode || '', baris: []}); }
+    // `=== undefined`, BUKAN `!indeks[kunci]` — indeks grup pertama adalah 0,
+    // dan `!0` bernilai true sehingga anggota berikutnya akan dipecah jadi
+    // grup baru. Persis jenis bug yang bikin satu borongan tampil terbelah.
+    if (indeks[kunci] === undefined) { indeks[kunci] = grup.length; grup.push({id: g, mode: wo.wo_group_mode || '', baris: []}); }
     grup[indeks[kunci]].baris.push(wo);
   });
 
