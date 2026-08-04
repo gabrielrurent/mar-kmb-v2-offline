@@ -120,6 +120,9 @@
     .btnStart{background:#10b981;color:#fff}
     .btnPause{background:#f59e0b;color:#fff}
     .btnStop{background:#ef4444;color:#fff}
+    /* Reset menghapus jam kerja. Sengaja bergaya garis luar & paling redup —
+       tindakan merusak tidak boleh terlihat semenarik Start atau Finish. */
+    .btnReset{background:transparent;color:#6b7280;border:1px solid #d1d5db}
   </style>
 </head>
 <body>
@@ -182,6 +185,7 @@
           <button type="button" class="timerBtn btnStart" id="modalBtnStart" onclick="modalTimerStart()">▶ Start</button>
           <button type="button" class="timerBtn btnPause" id="modalBtnPause" onclick="modalTimerPause()" style="display:none">⏸ Pause</button>
           <button type="button" class="timerBtn btnStop" id="modalBtnStop" onclick="modalTimerStop()" style="display:none">⏹ Finish &amp; Isi Jam</button>
+          <button type="button" class="timerBtn btnReset" id="modalBtnReset" onclick="modalTimerReset()" style="display:none">↺ Reset</button>
         </div>
         <div id="fTimerSummary" style="display:none;margin-top:9px;background:#DCFCE7;border:1px solid #86EFAC;color:#166534;border-radius:8px;padding:9px 11px;font-size:13px;font-weight:700;text-align:center"></div>
         <div style="font-size:11px;color:#0284c7;margin-top:7px;line-height:1.5">▶ mulai kerja · ⏸ jeda · ⏹ selesai. Durasi terhitung otomatis &amp; tersimpan walau app ditutup. Memulai WO lain akan menjeda WO ini. Jam di bawah boleh Anda koreksi manual.</div>

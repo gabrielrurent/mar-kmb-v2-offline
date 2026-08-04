@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v50';
+var APP_VERSION = 'v51';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -220,6 +220,48 @@ function clearTimerAfterSubmit(woId) {
   renderAll();
 }
 
+/**
+ * RESET: kembalikan timer WO ini ke 00:00:00.
+ *
+ * ⚠️ Ini MENGHAPUS jam kerja yang sudah terekam, dan jam itu jalur uang
+ * (actual_hours → faktor ketepatan waktu → poin → rupiah). Karena itu:
+ *
+ * 1. Selalu minta konfirmasi dan SEBUTKAN berapa yang akan hilang. "Yakin
+ *    reset?" tidak cukup — mekanik harus tahu nilainya sebelum menekan.
+ * 2. Isian Jam Mulai/Selesai di form ikut dikosongkan, begitu juga ringkasan
+ *    hijaunya. Tanpa ini muncul bug paling berbahaya dari tombol ini: jam di
+ *    layar sudah 00:00:00, tapi form MASIH menyimpan jam lama dan terkirim
+ *    apa adanya — mekanik dibayar untuk waktu yang baru saja dia hapus.
+ * 3. partial_hours dari sesi yang sudah ditransfer TIDAK tersentuh; itu ada
+ *    di server. Disebutkan di dialog supaya tak dikira ikut hilang.
+ */
+function resetLiveTimer(woId) {
+  var st = getTimerState(woId);
+  var totalMs = (parseFloat(st.elapsed_ms)||0) +
+                (st.state==='running' ? (Date.now()-(parseFloat(st.start_epoch)||Date.now())) : 0);
+  if (totalMs > 0) {
+    var wo = null;
+    for (var i=0;i<S.wos.length;i++) if (String(S.wos[i].id)===String(woId)) wo = S.wos[i];
+    var pesan = 'Reset timer ke 00:00:00?\n\n' +
+                'Waktu terekam ' + msToJamMenit(totalMs) + ' akan DIHAPUS dan tidak bisa dikembalikan.';
+    if (wo && (parseFloat(wo.partial_hours)||0) > 0) {
+      pesan += '\n\nJam dari sesi yang sudah ditransfer (' + fmtJamMenit(wo.partial_hours) + ') TIDAK ikut terhapus.';
+    }
+    if (!confirm(pesan)) return;
+  }
+  saveTimerState(woId, { state:'idle', start_epoch:0, elapsed_ms:0 });
+  // Form isian bisa sedang terbuka untuk WO ini — kosongkan jamnya juga.
+  if (activeWo && String(activeWo.id) === String(woId)) {
+    var fs = document.getElementById('fStart'), fe = document.getElementById('fEnd');
+    if (fs) fs.value = ''; if (fe) fe.value = '';
+    showTimerSummary(0);
+    updateModalTimerUI();
+  }
+  renderAll();
+  if (totalMs > 0) toast('↺ Timer direset ke 00:00:00');
+}
+function modalTimerReset() { if (activeWo) resetLiveTimer(activeWo.id); }
+
 function msToJamMenit(ms) {
   var tot = Math.round((parseFloat(ms)||0)/60000);
   var j = Math.floor(tot/60), m = tot%60;
@@ -284,9 +326,14 @@ function updateModalTimerUI() {
   var bStart = document.getElementById('modalBtnStart');
   var bPause = document.getElementById('modalBtnPause');
   var bStop  = document.getElementById('modalBtnStop');
+  var bReset = document.getElementById('modalBtnReset');
   if (!disp) return;
 
   disp.textContent = formatMsToHms(st.elapsed_ms + (st.state==='running' ? (Date.now()-st.start_epoch) : 0));
+
+  // Reset hanya saat ada yang bisa direset — di keadaan idle hanya menambah
+  // risiko salah pencet tanpa gunanya.
+  if (bReset) bReset.style.display = (st.state === 'idle') ? 'none' : 'inline-block';
 
   if (st.state === 'idle') {
     bStart.style.display='inline-block'; bStart.textContent='▶ Start';
@@ -329,6 +376,9 @@ function _timerControls(wo) {
       (isRunning?'':'<button type="button" class="timerBtn btnStart" onclick="startLiveTimer(\''+id+'\')">▶ '+(isPaused?'Resume':'Start')+'</button>')+
       (isRunning?'<button type="button" class="timerBtn btnPause" onclick="pauseLiveTimer(\''+id+'\')">⏸ Pause</button>':'')+
       (st.state!=='idle'?'<button type="button" class="timerBtn btnStop" onclick="openSubmitWithTimer(\''+id+'\')">⏹ Finish &amp; Isi</button>':'')+
+      // Reset hanya muncul kalau ADA yang bisa direset. Di keadaan idle tombol
+      // ini tak berguna dan hanya menambah risiko salah pencet.
+      (st.state!=='idle'?'<button type="button" class="timerBtn btnReset" onclick="resetLiveTimer(\''+id+'\')">↺ Reset</button>':'')+
     '</div>'+
   '</div>';
 }
