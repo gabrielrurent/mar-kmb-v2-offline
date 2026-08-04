@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v51';
+var APP_VERSION = 'v52';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -537,7 +537,7 @@ function syncNow(manual) {
   // JANGAN buang permintaan ini. Dulu (dan masih terjadi di SUM sebelum diperbaiki):
   // approve beruntun → klik ke-2 & ke-3 datang saat sync pertama masih jalan, lalu
   // dibuang begitu saja. Snapshot antrean sudah diambil sebelum keduanya masuk, jadi
-  // hanya WO PERTAMA yang terkirim; sisanya menggantung sampai user menekan Sync
+  // hanya WO PERTAMA yang terkirim; sisanya menggantung sampai user menekan Refresh
   // manual. Tandai, lalu jalankan ulang otomatis setelah sync ini selesai.
   if (S.syncing) { _syncAgain = true; return Promise.resolve(); }
   if (manual) requestNotifPermission();
@@ -694,7 +694,7 @@ function doLogout() {
   // Logout menghapusnya permanen → wajib peringatan eksplisit.
   var pend = S.outbox.filter(function(o){return o.status==='queued'||o.status==='failed_retry';}).length;
   var msg = pend > 0
-    ? '⚠️ PERHATIAN: masih ada '+pend+' operasi BELUM TERKIRIM di antrean.\nLogout akan MENGHAPUS antrean itu PERMANEN (laporan/approval hilang).\n\nSaran: batal, cari sinyal, tekan 🔄 Sync sampai antrean kosong, baru logout.\n\nTetap logout dan hapus antrean?'
+    ? '⚠️ PERHATIAN: masih ada '+pend+' operasi BELUM TERKIRIM di antrean.\nLogout akan MENGHAPUS antrean itu PERMANEN (laporan/approval hilang).\n\nSaran: batal, cari sinyal, tekan 🔄 Refresh sampai antrean kosong, baru logout.\n\nTetap logout dan hapus antrean?'
     : 'Logout? Data lokal akan dihapus.';
   if (!confirm(msg)) return;
   var tx = db.transaction(['kv','outbox'],'readwrite');
@@ -759,6 +759,23 @@ function queueTransfer() {
     syncNow(false);
   });
 }
+/**
+ * Masukkan laporan kerja ke antrean kirim. SATU jalur untuk form "Isi Manual"
+ * DAN tombol "Kirim" langsung — kalau dipisah, keduanya bisa berbeda aturan
+ * validasi dan salah satunya lolos mengirim jam yang tak masuk akal.
+ */
+function _antreSubmit(wo, startISO, endISO, hm, km, part) {
+  var op = { op_id:uuid(), seq:(_enqSeq++), action:'submit_work', wo_id:wo.id, wo_number:wo.wo_number,
+    payload:{wo_id:wo.id, start_time:startISO, end_time:endISO, hour_meter:hm||'', kilometers:km||'', part_category:part||''},
+    status:'queued', created_at:new Date().toISOString() };
+  return obPut(op).then(refreshOutbox).then(function() {
+    clearTimerAfterSubmit(op.wo_id);   // timer baru dibersihkan setelah masuk antrean
+    closeModal('submitModal'); renderAll();
+    toast(navigator.onLine?'📮 Mengirim...':'📮 Tersimpan! Terkirim saat ada sinyal');
+    syncNow(false);
+  });
+}
+
 function queueSubmit() {
   var st=document.getElementById('fStart').value, en=document.getElementById('fEnd').value;
   // HM & KM opsional sejak 1 Agu 2026 (input disembunyikan) — kirim apa adanya
@@ -766,15 +783,36 @@ function queueSubmit() {
   var part=document.getElementById('fPart').value;
   if (!st||!en) { toast('Jam mulai & selesai wajib'); return; }
   if (new Date(en)<=new Date(st)) { toast('Jam selesai harus setelah mulai'); return; }
-  var op = { op_id:uuid(), seq:(_enqSeq++), action:'submit_work', wo_id:activeWo.id, wo_number:activeWo.wo_number,
-    payload:{wo_id:activeWo.id, start_time:new Date(st).toISOString(), end_time:new Date(en).toISOString(), hour_meter:hm, kilometers:km, part_category:part},
-    status:'queued', created_at:new Date().toISOString() };
-  obPut(op).then(refreshOutbox).then(function() {
-    clearTimerAfterSubmit(op.wo_id);   // timer baru dibersihkan setelah masuk antrean
-    closeModal('submitModal'); renderAll();
-    toast(navigator.onLine?'📮 Mengirim...':'📮 Tersimpan! Terkirim saat ada sinyal');
-    syncNow(false);
-  });
+  _antreSubmit(activeWo, new Date(st).toISOString(), new Date(en).toISOString(), hm, km, part);
+}
+
+/**
+ * KIRIM LANGSUNG dari kartu WO — tanpa membuka form.
+ *
+ * Jamnya diambil dari timer. Karena tidak ada form untuk ditinjau lebih dulu,
+ * konfirmasinya WAJIB menyebut durasi yang akan terkirim: sekali masuk antrean,
+ * WO berpindah ke meja L1 dan mekanik tak bisa lagi mengubahnya sendiri.
+ * Timer kosong → arahkan ke Isi Manual, jangan diam-diam mengirim 0 jam.
+ */
+function kirimLangsung(woId) {
+  var wo = null;
+  for (var i=0;i<S.wos.length;i++) if (String(S.wos[i].id)===String(woId)) wo = S.wos[i];
+  if (!wo) return;
+  var st = getTimerState(woId);
+  var totalMs = (parseFloat(st.elapsed_ms)||0) +
+                (st.state==='running' ? (Date.now()-(parseFloat(st.start_epoch)||Date.now())) : 0);
+  if (totalMs <= 0) {
+    toast('⏱️ Timer masih 00:00:00 — tekan ▶ Start dulu, atau pakai ✍️ Isi Manual');
+    return;
+  }
+  var now = new Date(), start = new Date(now.getTime()-totalMs);
+  if (!confirm('Kirim laporan kerja ' + wo.wo_number + '?\n\n' +
+               'Durasi: ' + msToJamMenit(totalMs) + '\n' +
+               start.toLocaleString('id-ID') + ' → ' + now.toLocaleString('id-ID') + '\n\n' +
+               'Setelah terkirim, WO masuk ke meja L1 dan tidak bisa Anda ubah lagi.\n' +
+               'Perlu mengoreksi jam atau menambah keterangan? Pakai ✍️ Isi Manual.')) return;
+  stopLiveTimer(woId);
+  _antreSubmit(wo, start.toISOString(), now.toISOString(), '', '', '');
 }
 
 /* ── M2: Create WO form ── */
@@ -1516,7 +1554,7 @@ function fmtDateTime(iso){
 }
 function badgeFor(wo,pendingOp) {
   if (pendingOp) {
-    if (pendingOp.status==='queued') return ['📮 Antre','#b45309'];
+    if (pendingOp.status==='queued') return ['📮 Dikirim','#b45309'];
     if (pendingOp.status==='failed') return ['❌ Ditolak','#b91c1c'];
     // 'done' TIDAK menimpa: pakai status asli WO agar berubah (Terkirim→L1→L2→Approved) setelah sync
   }
@@ -1531,7 +1569,7 @@ function renderAll() {
   var on=navigator.onLine;
   document.getElementById('netDot').style.background=on?'#22c55e':'#ef4444';
   document.getElementById('netText').textContent=on?'Online':'Offline';
-  document.getElementById('syncBtn').innerHTML = S.syncing ? '<span class="spin"></span>Sync…' : '🔄 Sync';
+  document.getElementById('syncBtn').innerHTML = S.syncing ? '<span class="spin"></span>Refresh…' : '🔄 Refresh';
   document.getElementById('lastSync').textContent=(S.lastSync?'Sync: '+new Date(S.lastSync).toLocaleString('id-ID'):'Belum sync')+' · '+APP_VERSION;
   document.getElementById('meName').textContent=S.me?(S.me.name||S.me.mechanic_id):'';
   // tabs
@@ -1587,7 +1625,7 @@ function renderAll() {
 function renderMonitorTab(el) {
   var mons = S.monitoring || [];
   if (!mons.length) {
-    el.innerHTML = '<div class="empty">Belum ada data monitoring. Tekan 🔄 Sync saat ada sinyal.</div>';
+    el.innerHTML = '<div class="empty">Belum ada data monitoring. Tekan 🔄 Refresh saat ada sinyal.</div>';
     return;
   }
   var ov = S.monitoringOverall || {};
@@ -1632,7 +1670,7 @@ function salinToken(tok, btn) {
 function renderWos(el) {
   var opByWo={};
   S.outbox.forEach(function(o){if(o.wo_id&&(!opByWo[o.wo_id]||o.created_at>opByWo[o.wo_id].created_at))opByWo[o.wo_id]=o;});
-  if (!S.wos.length) { el.innerHTML='<div class="empty">Belum ada kartu WO.<br>Tekan 🔄 Sync saat ada sinyal.</div>'; return; }
+  if (!S.wos.length) { el.innerHTML='<div class="empty">Belum ada kartu WO.<br>Tekan 🔄 Refresh saat ada sinyal.</div>'; return; }
   var html='';
   S.wos.forEach(function(wo) {
     var op=opByWo[wo.id]; var b=badgeFor(wo,op);
@@ -1644,7 +1682,12 @@ function renderWos(el) {
       timKerjaStr(wo.team)+'</div>'+
       (wo.keterangan?'<div class="ket">📝 '+esc(wo.keterangan)+'</div>':'')+
       (canFill?_timerControls(wo):'')+
-      (canFill?'<button class="big" onclick="openSubmitWithTimer(\''+esc(String(wo.id))+'\')">✍️ Isi & Kirim</button>':'')+
+      // Dua jalur terpisah: "Isi Manual" untuk mengoreksi/melengkapi lewat form,
+      // "Kirim" untuk langsung mengirim jam hasil timer tanpa membuka form.
+      (canFill?'<div style="display:flex;gap:6px;margin-top:10px">'+
+        '<button class="big secondary" style="flex:1;margin-top:0" onclick="openSubmitWithTimer(\''+esc(String(wo.id))+'\')">✍️ Isi Manual</button>'+
+        '<button class="big" style="flex:1;margin-top:0" onclick="kirimLangsung(\''+esc(String(wo.id))+'\')">📮 Kirim</button>'+
+      '</div>':'')+
       '</div>';
   });
   el.innerHTML=html;
@@ -1671,7 +1714,7 @@ function timKerjaStr(team) {
 }
 
 function renderCreateTab(el) {
-  if (!S.refs) { el.innerHTML='<div class="empty">Tekan 🔄 Sync untuk memuat data referensi.</div>'; return; }
+  if (!S.refs) { el.innerHTML='<div class="empty">Tekan 🔄 Refresh untuk memuat data referensi.</div>'; return; }
   el.innerHTML='<button class="big" onclick="openCreateForm()" style="margin-bottom:12px">➕ Buat Work Order Baru</button>'+
     '<div class="sub">Data referensi: '+(S.refs.jobs_field||[]).length+' job field, '+(S.refs.jobs_workshop||[]).length+' job WS, '+(S.refs.components||[]).length+' komponen tyreman</div>';
 }
@@ -1844,7 +1887,7 @@ function renderActiveList(){
   return html;
 }
 function renderApprovedList(){
-  if (!S.approved.length) return '<div class="empty">Belum ada WO approved.<br>Tekan 🔄 Sync saat online.</div>';
+  if (!S.approved.length) return '<div class="empty">Belum ada WO approved.<br>Tekan 🔄 Refresh saat online.</div>';
   var html='<div class="sub">'+S.approved.length+' WO approved (maks 100 terbaru)</div>';
   S.approved.forEach(function(wo){
     var othersBadge = wo.is_others ? '<span class="badge" style="background:#0ea5e9">OTHERS</span>' : '';
