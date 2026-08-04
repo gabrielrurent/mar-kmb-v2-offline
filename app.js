@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v52';
+var APP_VERSION = 'v53';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -854,6 +854,11 @@ function openCreateForm() {
   // listeners
   var radios = document.querySelectorAll('input[name="cSec"]');
   for (var ri=0;ri<radios.length;ri++) radios[ri].onchange = onCreateSectionChange;
+  // Mode grup selalu dimulai dari "1 WO saja" — keranjang sisa sesi sebelumnya
+  // tak boleh terbawa dan diam-diam ikut terkirim.
+  var mr = document.querySelector('input[name="cmode"][value=""]');
+  if (mr) mr.checked = true;
+  onGrupModeChange();
   showModal('createModal');
 }
 function onCompChange() {
@@ -1066,11 +1071,115 @@ function addTeamMember() {
   document.getElementById('cTeamList').appendChild(div);
   refreshCreateMechanics();
 }
-function queueCreate(keepOpen) {
+// ═══ WO GROUP di PWA ════════════════════════════════════════════════════════
+// Satu borongan = beberapa baris; TIAP BARIS tetap satu WO utuh di server, jadi
+// timer, transfer, dan approval-nya bekerja per baris tanpa perubahan apa pun.
+// Dikirim SATU operasi per baris dengan wo_group_id yang sama: kalau sinyal
+// putus di tengah, baris yang sudah sampai tetap sah dan sisanya tetap mengantre.
+var _grupMode = '';      // '' | 'unit' | 'job'
+var _grupBaris = [];     // [{payload, label}]
+
+function onGrupModeChange() {
+  var r = document.querySelector('input[name="cmode"]:checked');
+  _grupMode = r ? r.value : '';
+  _grupBaris = [];
+  var hint = document.getElementById('cModeHint');
+  if (_grupMode === 'unit') {
+    hint.style.display = 'block';
+    hint.innerHTML = 'Unit &amp; kondisi dikunci; <b>job boleh ditambah berkali-kali</b>. Job yang sama ditolak.';
+  } else if (_grupMode === 'job') {
+    hint.style.display = 'block';
+    hint.innerHTML = 'Job &amp; kondisi dikunci; <b>unit boleh ditambah berkali-kali</b>. Unit yang sama ditolak.';
+  } else { hint.style.display = 'none'; hint.innerHTML = ''; }
+  renderGrupBaris();
+}
+
+/** Kunci pembanding kembar, mengikuti mode. */
+function _kunciBaris(p) {
+  return (_grupMode === 'unit')
+    ? String(p.job_id || p.component_id || '')
+    : String(p.unit_id || '');
+}
+
+function tambahBarisGrup() {
+  var d = _bacaBarisCreate();
+  if (d.err) { toast(d.err); return; }
+  var kunci = _kunciBaris(d.payload);
+  if (!kunci) { toast(_grupMode === 'unit' ? 'Pilih job dulu' : 'Pilih unit dulu'); return; }
+  for (var i = 0; i < _grupBaris.length; i++) {
+    if (_kunciBaris(_grupBaris[i].payload) === kunci) {
+      toast(_grupMode === 'unit' ? '⚠️ Job ini sudah ada di daftar' : '⚠️ Unit ini sudah ada di daftar');
+      return;
+    }
+  }
+  _grupBaris.push({payload: d.payload, label: d.label});
+  renderGrupBaris();
+  // Kosongkan HANYA yang berulang; yang dikunci (unit/job) sengaja dipertahankan
+  // supaya mekanik tak perlu memilihnya ulang tiap baris.
+  if (_grupMode === 'unit') { var j = document.getElementById('cCasJob'); if (j) j.value = ''; }
+  else { ['cUnit','cTyreUnit'].forEach(function(id){ var e=document.getElementById(id); if(e) e.value=''; }); }
+  updateCreatePreview();
+  toast('✅ Ditambahkan — total ' + _grupBaris.length + ' baris');
+}
+
+function hapusBarisGrup(i) { _grupBaris.splice(i, 1); renderGrupBaris(); }
+
+function renderGrupBaris() {
+  var box = document.getElementById('cGrupBox');
+  var pakaiGrup = (_grupMode === 'unit' || _grupMode === 'job');
+  box.style.display = pakaiGrup ? 'block' : 'none';
+  document.getElementById('cBtnSatu').style.display = pakaiGrup ? 'none' : 'block';
+  document.getElementById('cBtnSelesai').style.display = pakaiGrup ? 'none' : 'block';
+  document.getElementById('cBtnGrup').style.display = pakaiGrup ? 'block' : 'none';
+  document.getElementById('cGrupCount').textContent = _grupBaris.length;
+  document.getElementById('cGrupCount2').textContent = _grupBaris.length;
+  var html = _grupBaris.length ? '' : '<div class="sub" style="margin:0">Belum ada baris. Pilih lalu tekan “Tambahkan ke daftar”.</div>';
+  _grupBaris.forEach(function(b, i) {
+    html += '<div style="display:flex;gap:6px;align-items:center;margin-bottom:5px">' +
+      '<span style="flex:1;font-size:13px;color:var(--text)">' + (i+1) + '. ' + esc(b.label) + '</span>' +
+      '<button type="button" class="mini gray" onclick="hapusBarisGrup(' + i + ')">✕</button></div>';
+  });
+  document.getElementById('cGrupList').innerHTML = html;
+}
+
+/**
+ * Antre seluruh baris grup. Satu operasi per baris, wo_group_id sama.
+ * Kegagalan dilaporkan PER BARIS lengkap dengan job/unit-nya — mekanik harus
+ * tahu mana yang gagal supaya bisa membuat ulang sisanya, bukan sekadar
+ * "1 baris gagal".
+ */
+function simpanGrup() {
+  if (!_grupBaris.length) { toast('Belum ada baris di daftar'); return; }
+  var gid = 'GRP-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+  var tugas = _grupBaris.map(function(b) {
+    b.payload.wo_group_id = gid;
+    b.payload.wo_group_mode = _grupMode;
+    return obPut({ op_id:uuid(), seq:(_enqSeq++), action:'create_wo', payload:b.payload,
+      status:'queued', created_at:new Date().toISOString(),
+      // label ikut menyebut isinya → kalau gagal, daftar outbox langsung
+      // menunjukkan job/unit MANA yang perlu dibuat ulang.
+      label:'Buat WO · ' + b.label });
+  });
+  var n = _grupBaris.length;
+  Promise.all(tugas).then(refreshOutbox).then(function() {
+    _grupBaris = []; renderGrupBaris();
+    closeModal('createModal'); renderAll();
+    toast(navigator.onLine ? ('📮 Mengirim ' + n + ' baris...') : ('📮 ' + n + ' baris tersimpan — terkirim saat ada sinyal'));
+    syncNow(false);
+  });
+}
+
+/**
+ * Baca satu baris dari form create. SATU pembaca untuk WO tunggal DAN baris
+ * grup — kalau dipisah, keduanya bisa berbeda aturan validasi.
+ * @return {{payload:Object|null, label:string, err:string}}
+ */
+function _bacaBarisCreate() {
   var sec = getCreateSection();
   var wc = document.getElementById('cWc').value;
-  if (!wc) { toast('Pilih work condition'); return; }
+  if (!wc) return {payload:null, label:'', err:'Pilih work condition'};
   var payload = { section:sec, work_condition:wc, keterangan:document.getElementById('cKet').value.trim(), location: sec==='workshop'?'workshop':'field' };
+  var label = '';
   var _oc = document.getElementById('cOthersCheck');
   var pwaOthers = !!(_oc && _oc.checked); // Others via centang, seragam semua section
   if (pwaOthers) {
@@ -1078,30 +1187,35 @@ function queueCreate(keepOpen) {
     var obp = parseFloat(document.getElementById('cOthersBp').value);
     var oth = parseFloat(document.getElementById('cOthersTh').value);
     var ouf = parseFloat(document.getElementById('cOthersUf').value);
-    if (!odesc) { toast('Deskripsi job Others wajib diisi'); return; }
-    if (isNaN(obp) || obp <= 0) { toast('Base points Others wajib > 0'); return; }
-    if (isNaN(oth) || oth <= 0) { toast('Target hours Others wajib > 0'); return; }
-    if (isNaN(ouf) || ouf <= 0) { toast('Unit factor Others wajib > 0'); return; }
+    if (!odesc) return {payload:null, label:'', err:'Deskripsi job Others wajib diisi'};
+    if (isNaN(obp) || obp <= 0) return {payload:null, label:'', err:'Base points Others wajib > 0'};
+    if (isNaN(oth) || oth <= 0) return {payload:null, label:'', err:'Target hours Others wajib > 0'};
+    if (isNaN(ouf) || ouf <= 0) return {payload:null, label:'', err:'Unit factor Others wajib > 0'};
     payload.component_id = 'COM-OTHERS';
     payload.others_description = odesc;
     payload.others_base_points = obp;
     payload.others_target_hours = oth;
     payload.others_unit_factor = ouf;
+    label = 'Others — ' + odesc;
   } else if (sec === 'tyreman') {
-    var comp = document.getElementById('cComp').value;
-    var unit = document.getElementById('cTyreUnit').value;
-    if (!comp) { toast('Pilih joblist tyreman'); return; }
-    if (!unit) { toast('Pilih unit'); return; }
+    var compSel = document.getElementById('cComp');
+    var unitSel = document.getElementById('cTyreUnit');
+    var comp = compSel.value, unit = unitSel.value;
+    if (!comp) return {payload:null, label:'', err:'Pilih joblist tyreman'};
+    if (!unit) return {payload:null, label:'', err:'Pilih unit'};
     payload.component_id = comp; payload.unit_id = unit;
+    label = _teksOpsi(compSel) + ' @ ' + _teksOpsi(unitSel);
   } else {
     var jobSel = document.getElementById('cCasJob');
-    if (!jobSel.value) { toast('Pilih job dari katalog'); return; }
+    if (!jobSel.value) return {payload:null, label:'', err:'Pilih job dari katalog'};
     payload.job_id = jobSel.value;
+    label = _teksOpsi(jobSel);
     if (sec === 'field') {
-      var fUnit = document.getElementById('cUnit').value;
-      if (!fUnit) { toast('Pilih unit'); return; }
-      payload.unit_id = fUnit;
-    }
+      var fUnitSel = document.getElementById('cUnit');
+      if (!fUnitSel.value) return {payload:null, label:'', err:'Pilih unit'};
+      payload.unit_id = fUnitSel.value;
+      label += ' @ ' + _teksOpsi(fUnitSel);
+    } else { label += ' @ Workshop'; }
   }
   // team
   var sels = document.querySelectorAll('.cTeamSel');
@@ -1109,12 +1223,26 @@ function queueCreate(keepOpen) {
   for (var i=0;i<sels.length;i++) {
     var mid = sels[i].value;
     if (!mid) continue;
-    if (seen[mid]) { toast('Mekanik duplikat'); return; }
+    if (seen[mid]) return {payload:null, label:'', err:'Mekanik duplikat'};
     seen[mid]=true; team.push({mechanic_id:mid});
   }
-  if (!team.length) { toast('Tambah minimal 1 mekanik'); return; }
+  if (!team.length) return {payload:null, label:'', err:'Tambah minimal 1 mekanik'};
   payload.team = team;
-  var op = { op_id:uuid(), seq:(_enqSeq++), action:'create_wo', payload:payload, status:'queued', created_at:new Date().toISOString(), label:'Buat WO '+sec };
+  return {payload: payload, label: label, err: ''};
+}
+
+/** Teks opsi terpilih sebuah <select>, dipotong agar label baris tetap ringkas. */
+function _teksOpsi(sel) {
+  if (!sel || sel.selectedIndex < 0) return '';
+  var t = String(sel.options[sel.selectedIndex].textContent || '').trim();
+  return t.length > 46 ? t.slice(0, 45) + '…' : t;
+}
+
+function queueCreate(keepOpen) {
+  var d = _bacaBarisCreate();
+  if (d.err) { toast(d.err); return; }
+  var payload = d.payload;
+  var op = { op_id:uuid(), seq:(_enqSeq++), action:'create_wo', payload:payload, status:'queued', created_at:new Date().toISOString(), label:'Buat WO · '+d.label };
   obPut(op).then(refreshOutbox).then(function() {
     renderAll();
     if (keepOpen) {
@@ -1164,7 +1292,7 @@ function openApproveForm(woId) {
   var a = activeApproval;
   document.getElementById('aTitle').textContent = a.wo_number;
   var atl = a.timeliness;
-  document.getElementById('aDesc').innerHTML = '<b>'+esc(a.component_name||'-')+'</b>'+(a.is_others?' <span class="badge" style="background:#0ea5e9">OTHERS</span>':'')+byMechBadge(a)+'<br>'+
+  document.getElementById('aDesc').innerHTML = '<b>'+esc(a.component_name||'-')+'</b>'+(a.is_others?' <span class="badge" style="background:#0ea5e9">OTHERS</span>':'')+byMechBadge(a)+grupBadge(a)+'<br>'+
     (a.unit_name?'🚜 '+esc(a.unit_name)+'<br>':'')+
     '📍 Lokasi: '+esc(locLabel(a.location))+'<br>'+
     'Kondisi: '+esc(wcLabel(a.work_condition))+'<br>'+
@@ -1671,26 +1799,108 @@ function renderWos(el) {
   var opByWo={};
   S.outbox.forEach(function(o){if(o.wo_id&&(!opByWo[o.wo_id]||o.created_at>opByWo[o.wo_id].created_at))opByWo[o.wo_id]=o;});
   if (!S.wos.length) { el.innerHTML='<div class="empty">Belum ada kartu WO.<br>Tekan 🔄 Refresh saat ada sinyal.</div>'; return; }
-  var html='';
+  // Kelompokkan per WO Group. Baris tanpa grup jadi kelompok sendiri-sendiri,
+  // jadi tampilan WO tunggal tidak berubah sama sekali.
+  var grup = [], indeks = {};
   S.wos.forEach(function(wo) {
-    var op=opByWo[wo.id]; var b=badgeFor(wo,op);
-    var canFill=String(wo.status)==='pending_mechanic_work'&&(!op||op.status==='failed');
-    html+='<div class="card"><div class="cardTop"><b>'+esc(wo.wo_number)+'</b><span class="badge" style="background:'+b[1]+'">'+b[0]+'</span>'+
-      (wo.is_others?'<span class="badge" style="background:#0ea5e9">OTHERS</span>':'')+'</div>'+
-      '<div class="cardBody"><b>'+esc(wo.component_name||'-')+'</b>'+(wo.unit_name?' · '+esc(wo.unit_name):'')+(wo.target_hours?' · Target: '+fmtJamMenit(wo.target_hours):'')+'<br>'+
-      '📍 '+esc(locLabel(wo.location))+' · Kondisi: '+esc(wcLabel(wo.work_condition))+
-      timKerjaStr(wo.team)+'</div>'+
-      (wo.keterangan?'<div class="ket">📝 '+esc(wo.keterangan)+'</div>':'')+
-      (canFill?_timerControls(wo):'')+
-      // Dua jalur terpisah: "Isi Manual" untuk mengoreksi/melengkapi lewat form,
-      // "Kirim" untuk langsung mengirim jam hasil timer tanpa membuka form.
-      (canFill?'<div style="display:flex;gap:6px;margin-top:10px">'+
-        '<button class="big secondary" style="flex:1;margin-top:0" onclick="openSubmitWithTimer(\''+esc(String(wo.id))+'\')">✍️ Isi Manual</button>'+
-        '<button class="big" style="flex:1;margin-top:0" onclick="kirimLangsung(\''+esc(String(wo.id))+'\')">📮 Kirim</button>'+
-      '</div>':'')+
-      '</div>';
+    var g = String(wo.wo_group_id || '');
+    var kunci = g || ('__solo__' + wo.id);
+    if (!indeks[kunci]) { indeks[kunci] = grup.length; grup.push({id: g, mode: wo.wo_group_mode || '', baris: []}); }
+    grup[indeks[kunci]].baris.push(wo);
+  });
+
+  var html = '';
+  grup.forEach(function(G) {
+    var banyak = G.baris.length > 1 || !!G.id;
+    // Baris yang MASIH bisa diisi — dasar tombol "Kirim Semua"
+    var bisaKirim = G.baris.filter(function(wo) {
+      var op = opByWo[wo.id];
+      return String(wo.status)==='pending_mechanic_work' && (!op || op.status==='failed');
+    });
+    html += '<div class="card">';
+
+    if (banyak) {
+      var w0 = G.baris[0];
+      // Judul grup menyebut APA yang dikunci, supaya mekanik langsung paham
+      // borongan ini bentuknya seperti apa.
+      var judul = (G.mode === 'job')
+        ? esc(w0.component_name || '-') + ' · ' + G.baris.length + ' unit'
+        : esc(w0.unit_name || 'Workshop') + ' · ' + G.baris.length + ' job';
+      html += '<div class="cardTop"><b>📦 '+judul+'</b>'+
+        '<span class="badge" style="background:#0f766e">'+(G.mode==='job'?'1 JOB · BANYAK UNIT':'1 UNIT · BANYAK JOB')+'</span></div>'+
+        '<div class="cardBody">📍 '+esc(locLabel(w0.location))+' · Kondisi: '+esc(wcLabel(w0.work_condition))+
+        timKerjaStr(w0.team)+'</div>';
+    }
+
+    G.baris.forEach(function(wo) {
+      var op=opByWo[wo.id]; var b=badgeFor(wo,op);
+      var canFill=String(wo.status)==='pending_mechanic_work'&&(!op||op.status==='failed');
+      // Di dalam grup tiap baris diberi bingkai sendiri; WO tunggal tetap polos.
+      html += banyak ? '<div style="border-top:1px solid var(--border);padding-top:10px;margin-top:10px">' : '';
+      html += '<div class="cardTop"><b>'+esc(wo.wo_number)+'</b><span class="badge" style="background:'+b[1]+'">'+b[0]+'</span>'+
+        (wo.is_others?'<span class="badge" style="background:#0ea5e9">OTHERS</span>':'')+'</div>'+
+        '<div class="cardBody"><b>'+esc(wo.component_name||'-')+'</b>'+(wo.unit_name?' · '+esc(wo.unit_name):'')+(wo.target_hours?' · Target: '+fmtJamMenit(wo.target_hours):'')+
+        (banyak ? '' : '<br>📍 '+esc(locLabel(wo.location))+' · Kondisi: '+esc(wcLabel(wo.work_condition))+timKerjaStr(wo.team))+'</div>'+
+        (wo.keterangan?'<div class="ket">📝 '+esc(wo.keterangan)+'</div>':'')+
+        // Tiap baris punya timer, Isi Manual, Kirim, dan Transfer sendiri —
+        // karena tiap baris memang WO utuh di server.
+        (canFill?_timerControls(wo):'')+
+        (canFill?'<div style="display:flex;gap:6px;margin-top:10px">'+
+          '<button class="big secondary" style="flex:1;margin-top:0" onclick="openSubmitWithTimer(\''+esc(String(wo.id))+'\')">✍️ Isi Manual</button>'+
+          '<button class="big" style="flex:1;margin-top:0" onclick="kirimLangsung(\''+esc(String(wo.id))+'\')">📮 Kirim</button>'+
+        '</div>':'');
+      html += banyak ? '</div>' : '';
+    });
+
+    // Satu tombol Kirim untuk seluruh grup — mengirim baris yang timernya
+    // sudah jalan saja; yang masih 00:00:00 dibiarkan terbuka (keputusan Gabriel).
+    if (banyak && bisaKirim.length > 1) {
+      html += '<button class="big" style="background:#15803d" onclick="kirimSeluruhGrup(\''+esc(G.id)+'\')">📮 Kirim Semua ('+bisaKirim.length+' baris)</button>';
+    }
+    html += '</div>';
   });
   el.innerHTML=html;
+}
+
+/**
+ * Kirim seluruh baris dalam satu grup sekaligus.
+ * Baris yang timernya masih 00:00:00 DILEWATI, bukan dikirim 0 jam — 0 jam
+ * masuk perhitungan ketepatan waktu dan merusak poin. Yang dilewati tetap
+ * terbuka supaya bisa dikerjakan menyusul, dan jumlahnya disebut di ringkasan.
+ */
+function kirimSeluruhGrup(groupId) {
+  var siap = [], kosong = [];
+  S.wos.forEach(function(wo) {
+    if (String(wo.wo_group_id||'') !== String(groupId)) return;
+    if (String(wo.status) !== 'pending_mechanic_work') return;
+    var st = getTimerState(wo.id);
+    var ms = (parseFloat(st.elapsed_ms)||0) + (st.state==='running' ? (Date.now()-(parseFloat(st.start_epoch)||Date.now())) : 0);
+    if (ms > 0) siap.push({wo: wo, ms: ms}); else kosong.push(wo);
+  });
+  if (!siap.length) { toast('⏱️ Belum ada baris yang timernya jalan'); return; }
+
+  var rinci = siap.map(function(x){ return '• ' + (x.wo.component_name||x.wo.wo_number) + ' — ' + msToJamMenit(x.ms); }).join('\n');
+  var pesan = 'Kirim ' + siap.length + ' baris?\n\n' + rinci;
+  if (kosong.length) pesan += '\n\n' + kosong.length + ' baris masih 00:00:00 dan TIDAK dikirim — tetap terbuka untuk dikerjakan nanti.';
+  pesan += '\n\nSetelah terkirim, baris itu masuk ke meja L1 dan tidak bisa Anda ubah lagi.';
+  if (!confirm(pesan)) return;
+
+  var now = new Date();
+  var tugas = siap.map(function(x) {
+    stopLiveTimer(x.wo.id);
+    var mulai = new Date(now.getTime() - x.ms);
+    return obPut({ op_id:uuid(), seq:(_enqSeq++), action:'submit_work', wo_id:x.wo.id, wo_number:x.wo.wo_number,
+      payload:{wo_id:x.wo.id, start_time:mulai.toISOString(), end_time:now.toISOString(), hour_meter:'', kilometers:'', part_category:''},
+      status:'queued', created_at:new Date().toISOString(), label:'Submit · '+(x.wo.component_name||x.wo.wo_number) });
+  });
+  Promise.all(tugas).then(function(){
+    siap.forEach(function(x){ clearTimerAfterSubmit(x.wo.id); });
+    return refreshOutbox();
+  }).then(function() {
+    renderAll();
+    toast(navigator.onLine ? ('📮 Mengirim '+siap.length+' baris...') : ('📮 '+siap.length+' baris tersimpan — terkirim saat ada sinyal'));
+    syncNow(false);
+  });
 }
 /**
  * Susunan tim di kartu WO mekanik. Dirinya sendiri ditandai "(Anda)" dan
@@ -1764,6 +1974,13 @@ function ovBadges(wo){ return (wo.has_override_spv?'<span class="badge" style="b
    lebih teliti (job, unit, susunan tim) daripada buatan sesama approver.
    1:1 dengan badge di web (Approval.html). */
 function byMechBadge(wo){ return wo.created_by_is_mechanic ? '<span class="badge" style="background:#6d28d9">👷 Dibuat Mekanik</span>' : ''; }
+/* Konteks grup: approver perlu tahu WO ini bagian dari borongan, karena
+   keputusannya (approve/override/transfer) sering menyangkut baris lain juga. */
+function grupBadge(wo){
+  if (!wo || !wo.wo_group_id) return '';
+  var t = (String(wo.wo_group_mode)==='job') ? '1 job · banyak unit' : '1 unit · banyak job';
+  return '<span class="badge" style="background:#0f766e" title="Bagian dari borongan">📦 '+t+'</span>';
+}
 function cancelBtn(wo){ return '<button class="big secondary" onclick="openCancelForm(\''+esc(String(wo.id))+'\',\''+esc(String(wo.wo_number))+'\')">🗑 Batalkan WO</button>'; }
 /* ── TRANSFER WO: keputusan L1 (offline-capable) ── */
 function renderTransferList(){
@@ -1857,7 +2074,7 @@ function renderPendingList(){
     var tl = wo.timeliness;
     var tlBadge = tl ? '<span class="badge" style="background:'+(tl.status==='on_time'?'#15803d':tl.status==='late'?'#b45309':'#b91c1c')+'">⏱️ '+esc(tl.label)+' ×'+tl.factor+'</span>' : '';
     html+='<div class="card"><div class="cardTop"><b>'+esc(wo.wo_number)+'</b><span class="badge" style="background:'+(isL2?'#b45309':'#7c3aed')+'">'+(isL2?'⏳ L2':'⏳ L1')+'</span>'+
-      '<span class="badge" style="background:#334155">'+esc(wo.section)+'</span>'+othersBadge+tlBadge+ovBadges(wo)+byMechBadge(wo)+'</div>'+
+      '<span class="badge" style="background:#334155">'+esc(wo.section)+'</span>'+othersBadge+tlBadge+ovBadges(wo)+byMechBadge(wo)+grupBadge(wo)+'</div>'+
       '<div class="cardBody"><b>'+esc(wo.component_name||'-')+'</b>'+(wo.unit_name?' · '+esc(wo.unit_name):'')+'<br>'+
       '📍 Lokasi: '+esc(locLabel(wo.location))+'<br>'+
       'Kondisi: '+esc(wcLabel(wo.work_condition))+' · Aktual: '+fmtJamMenit(wo.actual_hours)+' · Target: '+fmtJamMenit(wo.target_hours)+'<br>'+

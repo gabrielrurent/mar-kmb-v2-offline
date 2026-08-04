@@ -228,6 +228,17 @@
   <div class="modal" id="createModal">
     <div class="sheet">
       <h2>➕ Buat Work Order</h2>
+
+      <!-- WO GROUP: satu borongan = beberapa baris job, tiap baris tetap WO utuh.
+           Dua arah, karena pola kerja lapangan memang dua macam. -->
+      <label>Cara pembuatan *</label>
+      <div class="secPicker" id="cModePicker">
+        <label class="secOpt"><input type="radio" name="cmode" value="" checked onchange="onGrupModeChange()"><span class="secCard">1 WO saja</span></label>
+        <label class="secOpt"><input type="radio" name="cmode" value="unit" onchange="onGrupModeChange()"><span class="secCard">1 unit · banyak job</span></label>
+        <label class="secOpt"><input type="radio" name="cmode" value="job" onchange="onGrupModeChange()"><span class="secCard">1 job · banyak unit</span></label>
+      </div>
+      <div class="sub" id="cModeHint" style="display:none"></div>
+
       <label>Section *</label>
       <div class="secPicker" id="cSecPicker"></div>
       <label>Work Condition *</label>
@@ -278,8 +289,16 @@
         <div class="sub" style="margin:0 0 4px;font-weight:700;color:#1e40af">📊 Preview Poin</div>
         <div id="cPreviewBody" style="font-size:13px;color:#111827"></div>
       </div>
-      <button class="big" onclick="queueCreate(true)">➕ Simpan & Buat Lagi</button>
-      <button class="big" onclick="queueCreate(false)" style="background:#15803d">📮 Simpan & Selesai</button>
+      <!-- Keranjang baris grup — hanya tampil saat mode grup dipilih -->
+      <div id="cGrupBox" style="display:none;background:var(--primary-soft);border:1px solid var(--border);border-radius:var(--radius-sm);padding:11px;margin-bottom:10px">
+        <div class="sub" style="margin:0 0 6px;font-weight:700;color:var(--primary)">📋 Daftar dalam WO ini (<span id="cGrupCount">0</span>)</div>
+        <div id="cGrupList"></div>
+        <button class="mini" onclick="tambahBarisGrup()" style="margin-top:6px">➕ Tambahkan ke daftar</button>
+      </div>
+
+      <button class="big" id="cBtnSatu" onclick="queueCreate(true)">➕ Simpan & Buat Lagi</button>
+      <button class="big" id="cBtnSelesai" onclick="queueCreate(false)" style="background:#15803d">📮 Simpan & Selesai</button>
+      <button class="big" id="cBtnGrup" onclick="simpanGrup()" style="display:none;background:#15803d">📮 Simpan Semua (<span id="cGrupCount2">0</span>)</button>
       <button class="big secondary" onclick="closeModal('createModal')">Batal</button>
     </div>
   </div>
