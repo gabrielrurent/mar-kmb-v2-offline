@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v64';
+var APP_VERSION = 'v65';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -1616,7 +1616,7 @@ function openApproveForm(woId) {
   // berikon sehingga dua baris itu menjorok sendiri dan sisanya terlihat tak
   // sejajar. Yang utama isinya terbaca sekali lihat, bukan hiasannya.
   document.getElementById('aDesc').innerHTML =
-    ketBar(a, a.status === 'pending_superintendent')+
+    ketBar(a, a.status === 'pending_superintendent')+ awBar(a) +
     '<div style="margin-top:9px"><b>'+esc(a.component_name||'-')+'</b></div>'+
     '<div class="woInfo">'+
       (a.unit_name ? '<span class="k">Unit</span><span class="v">'+esc(a.unit_name)+'</span>' : '')+
@@ -2188,7 +2188,7 @@ function renderWos(el) {
       html += '<div class="cardTop">'+
         '<b>'+(banyak ? '<span class="woLineNo">'+(idx+1)+'</span>' : '')+esc(wo.wo_number)+'</b>'+
         '<span class="badge" style="background:'+b[1]+'">'+b[0]+'</span>'+
-        (wo.is_others?'<span class="badge" style="background:#0ea5e9">OTHERS</span>':'')+'</div>'+
+        (wo.is_others?'<span class="badge" style="background:'+WARNA.others+'">Others</span>':'')+'</div>'+
         '<div class="cardBody"><b>'+esc(wo.component_name||'-')+'</b>'+(wo.unit_name?' · '+esc(wo.unit_name):'')+(wo.target_hours?' · Target: '+fmtJamMenit(wo.target_hours):'')+
         (banyak ? '' : '<br>📍 '+esc(locLabel(wo.location))+' · Kondisi: '+esc(wcLabel(wo.work_condition))+timKerjaStr(wo.team))+'</div>'+
         (wo.keterangan?'<div class="ket">📝 '+esc(wo.keterangan)+'</div>':'')+
@@ -2327,28 +2327,71 @@ function _kapital(s) {
 }
 
 /**
- * Bilah keterangan WO — satu kotak menyambung, terbagi RATA sebanyak isinya.
+ * BAHASA WARNA — tetap, tidak boleh berubah-ubah antar layar.
+ * Tujuannya supaya approver hafal: lihat warnanya, sudah tahu isinya apa.
+ * Kalau menambah keterangan baru, tambahkan warnanya DI SINI, jangan menulis
+ * kode warna langsung di tempat pemakaian.
+ */
+var WARNA = {
+  // Keterangan netral — "WO ini apa"
+  l1:        '#7c3aed',   // ungu   — menunggu L1
+  l2:        '#b45309',   // amber  — menunggu L2
+  section:   '#334155',   // abu    — tyreman/field/workshop
+  onTime:    '#15803d',   // hijau  — tepat waktu
+  late:      '#c2410c',   // oranye — terlambat
+  wayLate:   '#b91c1c',   // merah  — sangat terlambat
+  grup:      '#0f766e',   // teal   — bagian borongan
+  // Perhatian — "hal yang wajib disadari sebelum memutuskan"
+  mekanik:   '#be185d',   // magenta — dibuat mekanik sendiri
+  override:  '#4338ca',   // indigo  — angka sudah diubah approver
+  others:    '#0284c7'    // biru    — poin diketik manual saat WO dibuat
+};
+
+/**
+ * Pita PERHATIAN — hal yang wajib disadari approver sebelum memutuskan.
  *
- * Dulu badge-badge ini terpencar di baris judul dan terbaca seperti hiasan
- * lepas; sebagai satu bilah utuh ia terbaca sebagai "ini keterangan WO-nya".
- * Tiap iris punya warnanya sendiri supaya artinya terbaca dari warnanya juga,
- * bukan cuma dari tulisannya — berguna di layar silau.
+ * Dipisah dari bilah keterangan karena disamaratakan jadi iris sama besar
+ * justru MENGHILANGKAN bobotnya: "Dibuat Mekanik" terbaca seperti label biasa,
+ * padahal itu tanda supaya WO-nya ditelaah lebih teliti. Warnanya tetap,
+ * tidak ikut berubah mengikuti isi lain.
+ */
+function awBar(wo) {
+  var chip = [];
+  if (wo.created_by_is_mechanic) {
+    chip.push({c: WARNA.mekanik, t: '👷 DIBUAT MEKANIK', n: 'periksa job, unit &amp; susunan tim lebih teliti'});
+  }
+  if (wo.is_others) {
+    chip.push({c: WARNA.others, t: '📝 JOB MANUAL (OTHERS)', n: 'base points diketik manual saat WO dibuat'});
+  }
+  if (wo.has_override_spv || wo.has_override_supt) {
+    var siapa = (wo.has_override_spv && wo.has_override_supt) ? 'L1 & L2'
+              : (wo.has_override_spv ? 'L1' : 'L2');
+    chip.push({c: WARNA.override, t: '✏️ SUDAH DI-OVERRIDE ' + siapa, n: 'angka sudah diubah dari nilai sistem'});
+  }
+  if (!chip.length) return '';
+  return '<div class="awBar">' + chip.map(function(k) {
+    return '<div class="awChip" style="background:'+k.c+'"><span>'+k.t+'</span>'+
+           '<span class="awNote">· '+k.n+'</span></div>';
+  }).join('') + '</div>';
+}
+
+/**
+ * Bilah KETERANGAN netral — satu kotak menyambung, terbagi RATA sebanyak isinya.
+ * Hanya memuat "WO ini apa": tahap, section, ketepatan waktu, borongan.
+ * Yang bersifat peringatan sudah naik ke awBar di atasnya.
  */
 function ketBar(wo, isL2) {
   var seg = [];
-  seg.push({t: isL2 ? 'L2' : 'L1', c: isL2 ? '#b45309' : '#7c3aed'});
-  if (wo.section) seg.push({t: _kapital(wo.section), c: '#334155'});
-  if (wo.is_others) seg.push({t: 'Others', c: '#0ea5e9'});
+  seg.push({t: isL2 ? 'L2' : 'L1', c: isL2 ? WARNA.l2 : WARNA.l1});
+  if (wo.section) seg.push({t: _kapital(wo.section), c: WARNA.section});
   var tl = wo.timeliness;
   if (tl) {
     // Tanpa "×1" — faktornya sudah tercermin di poin, dan di sini yang perlu
     // dibaca approver hanya tepat waktu atau tidak.
-    seg.push({t: _kapital(tl.label), c: tl.status === 'on_time' ? '#15803d' : (tl.status === 'late' ? '#b45309' : '#b91c1c')});
+    seg.push({t: _kapital(tl.label),
+              c: tl.status === 'on_time' ? WARNA.onTime : (tl.status === 'late' ? WARNA.late : WARNA.wayLate)});
   }
-  if (wo.has_override_spv)  seg.push({t: 'Override L1', c: '#4338ca'});
-  if (wo.has_override_supt) seg.push({t: 'Override L2', c: '#6d28d9'});
-  if (wo.created_by_is_mechanic) seg.push({t: 'Dibuat Mekanik', c: '#7e22ce'});
-  if (wo.wo_group_id) seg.push({t: String(wo.wo_group_mode) === 'job' ? '1 Job · Banyak Unit' : '1 Unit · Banyak Job', c: '#0f766e'});
+  if (wo.wo_group_id) seg.push({t: String(wo.wo_group_mode) === 'job' ? '1 Job · Banyak Unit' : '1 Unit · Banyak Job', c: WARNA.grup});
 
   return '<div class="ketBar">' + seg.map(function(s) {
     return '<span class="ketSeg" style="background:'+s.c+'">'+esc(s.t)+'</span>';
@@ -2444,13 +2487,10 @@ function renderPendingList(){
   var html='<div class="sub">'+S.pending.length+' WO menunggu approval</div>';
   S.pending.forEach(function(wo){
     var isL2 = wo.status==='pending_superintendent';
-    var othersBadge = wo.is_others ? '<span class="badge" style="background:#0ea5e9">OTHERS</span>' : '';
-    var tl = wo.timeliness;
-    var tlBadge = tl ? '<span class="badge" style="background:'+(tl.status==='on_time'?'#15803d':tl.status==='late'?'#b45309':'#b91c1c')+'">⏱️ '+esc(tl.label)+' ×'+tl.factor+'</span>' : '';
     html+='<div class="card"><div class="cardTop"><b>'+esc(wo.wo_number)+'</b></div>'+
       // Semua keterangan jadi SATU bilah menyambung di bawah nomor WO —
       // bukan badge terpencar di baris judul.
-      ketBar(wo, isL2)+
+      ketBar(wo, isL2)+ awBar(wo) +
       '<div class="cardBody" style="margin-top:9px"><b>'+esc(wo.component_name||'-')+'</b>'+
       // Label–nilai sejajar. Tanpa ikon di sini: dulu hanya "Lokasi" berikon,
       // sehingga barisnya menjorok sendiri dan daftar jadi sulit dipindai.
@@ -2472,7 +2512,7 @@ function renderActiveList(){
   if (!S.active.length) return '<div class="empty">Tidak ada WO aktif (belum di-submit mekanik).</div>';
   var html='<div class="sub">'+S.active.length+' WO aktif — belum di-submit mekanik</div>';
   S.active.forEach(function(wo){
-    var othersBadge = wo.is_others ? '<span class="badge" style="background:#0ea5e9">OTHERS</span>' : '';
+    var othersBadge = wo.is_others ? '<span class="badge" style="background:'+WARNA.others+'">Others</span>' : '';
     html+='<div class="card"><div class="cardTop"><b>'+esc(wo.wo_number)+'</b><span class="badge" style="background:#1d4ed8">📝 Belum diisi</span>'+
       (wo.section?'<span class="badge" style="background:#334155">'+esc(wo.section)+'</span>':'')+othersBadge+'</div>'+
       '<div class="cardBody"><b>'+esc(wo.component_name||'-')+'</b><br>'+
@@ -2488,7 +2528,7 @@ function renderApprovedList(){
   if (!S.approved.length) return '<div class="empty">Belum ada WO approved.<br>Tekan 🔄 Refresh saat online.</div>';
   var html='<div class="sub">'+S.approved.length+' WO approved (maks 100 terbaru)</div>';
   S.approved.forEach(function(wo){
-    var othersBadge = wo.is_others ? '<span class="badge" style="background:#0ea5e9">OTHERS</span>' : '';
+    var othersBadge = wo.is_others ? '<span class="badge" style="background:'+WARNA.others+'">Others</span>' : '';
     var safety = wo.safety_incident ? '<span class="badge" style="background:#b91c1c">SAFETY</span>' : '';
     html+='<div class="card"><div class="cardTop"><b>'+esc(wo.wo_number)+'</b><span class="badge" style="background:#15803d">✅ Approved</span>'+
       (wo.section?'<span class="badge" style="background:#334155">'+esc(wo.section)+'</span>':'')+othersBadge+safety+'</div>'+
