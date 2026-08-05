@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v57';
+var APP_VERSION = 'v58';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -977,6 +977,12 @@ function onCreateSectionChange() {
   document.getElementById('cTyreGroup').style.display = isTyre ? 'block' : 'none';
   document.getElementById('cCascadeGroup').style.display = isTyre ? 'none' : 'block';
   document.getElementById('cUnitGroup').style.display = (isTyre || isWs) ? 'none' : 'block';
+  // Kolom acuan bisa sedang DIPINDAH keluar dari cTyreGroup/cCascadeGroup ke
+  // slot di bawah Work Condition. Kalau begitu, menyembunyikan induknya tidak
+  // lagi menyembunyikan mereka — jadi diatur eksplisit di sini.
+  var _tj = document.getElementById('cTyreJobWrap');  if (_tj) _tj.style.display = isTyre ? 'block' : 'none';
+  var _tu = document.getElementById('cTyreUnitWrap'); if (_tu) _tu.style.display = isTyre ? 'block' : 'none';
+  var _jw = document.getElementById('cJobWrap');      if (_jw) _jw.style.display = isTyre ? 'none' : 'block';
   document.getElementById('cModelGroup').style.display = isWs ? 'block' : 'none';
   if (isTyre) {
     var cSel = document.getElementById('cComp');
@@ -1162,11 +1168,45 @@ var _grupMode = '';      // '' | 'unit' | 'job'
 var _grupBaris = [];     // [{payload, label}]
 var _acuanTerkunci = null;  // {unit_id, job_id, comp, sub} dari baris pertama
 
+// Posisi asal tiap kolom yang dipindah, supaya bisa dikembalikan persis.
+var _acuanDipindah = [];
+
+/** Kembalikan kolom acuan ke tempat asalnya di dalam form. */
+function _kembalikanAcuanKeAsal() {
+  for (var i = _acuanDipindah.length - 1; i >= 0; i--) {
+    var o = _acuanDipindah[i];
+    try { o.parent.insertBefore(o.el, o.next); } catch (e) {}
+  }
+  _acuanDipindah = [];
+}
+
+/**
+ * Pindahkan kolom ACUAN ke tepat di bawah Work Condition.
+ * Yang dipilih SEKALI harus terbaca lebih dulu; yang berulang di bawahnya.
+ * Elemen dipindah utuh beserta labelnya, dan display-nya tetap diatur
+ * onCreateSectionChange seperti biasa.
+ */
+function _pindahAcuanKeAtas() {
+  _kembalikanAcuanKeAsal();
+  var slot = document.getElementById('cAnchorSlot');
+  if (!slot) return;
+  var ids = (_grupMode === 'unit') ? ['cUnitGroup', 'cTyreUnitWrap']
+          : (_grupMode === 'job')  ? ['cJobWrap', 'cTyreJobWrap']
+          : [];
+  ids.forEach(function(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    _acuanDipindah.push({el: el, parent: el.parentNode, next: el.nextSibling});
+    slot.appendChild(el);
+  });
+}
+
 function onGrupModeChange() {
   var r = document.querySelector('input[name="cmode"]:checked');
   _grupMode = r ? r.value : '';
   _grupBaris = [];
   _acuanTerkunci = null;
+  _pindahAcuanKeAtas();
   var hint = document.getElementById('cModeHint');
   if (_grupMode === 'unit') {
     hint.style.display = 'block';
@@ -1233,9 +1273,33 @@ function hapusBarisGrup(i) { _grupBaris.splice(i, 1); renderGrupBaris(); }
  * Terbuka lagi saat daftar KOSONG. Jadi kalau baru satu baris dan ternyata
  * salah pilih, cukup silang baris nomor 1 — persis alur yang diminta.
  */
+// SEMUA kolom yang pernah bisa terkunci. Dipakai untuk MEMBUKA seluruhnya lebih
+// dulu — kalau hanya kolom mode saat ini yang dibuka, kolom mode SEBELUMNYA
+// tetap terkunci selamanya. Itu bug nyata: kunci mode 'unit' tak pernah lepas
+// setelah pindah ke mode 'job'.
+var ID_BISA_TERKUNCI = ['cUnit', 'cTyreUnit', 'cCasComp', 'cCasSub', 'cCasJob', 'cComp', 'cWc', 'cModel'];
+
 function _kunciAcuanGrup() {
   var kunci = (_grupMode === 'unit' || _grupMode === 'job') && _grupBaris.length > 0;
 
+  // 1) Buka SEMUA dulu — tanpa ini sisa kunci dari mode sebelumnya menempel.
+  ID_BISA_TERKUNCI.forEach(function(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.disabled = false;
+    el.classList.remove('terkunci');
+    el.style.opacity = ''; el.style.cursor = '';
+  });
+  var rsAll = document.querySelectorAll('input[name="cSec"]');
+  for (var a = 0; a < rsAll.length; a++) rsAll[a].disabled = false;
+  var pick = document.getElementById('cSecPicker');
+  if (pick) pick.classList.remove('terkunciBox');
+  var ocAll = document.getElementById('cOthersCheck');
+  if (ocAll) ocAll.disabled = false;
+
+  if (!kunci) { _notaKunci(false); return; }
+
+  // 2) Kunci yang perlu saja
   var idAcuan = (_grupMode === 'unit')
     ? ['cUnit', 'cTyreUnit']                       // unit yang dikunci
     : ['cCasComp', 'cCasSub', 'cCasJob', 'cComp']; // job yang dikunci
@@ -1244,15 +1308,18 @@ function _kunciAcuanGrup() {
   idAcuan.concat(idBersama).forEach(function(id) {
     var el = document.getElementById(id);
     if (!el) return;
-    el.disabled = kunci;
-    el.style.opacity = kunci ? '.6' : '';
-    el.style.cursor = kunci ? 'not-allowed' : '';
+    el.disabled = true;
+    el.classList.add('terkunci');
   });
-  // Section: radio, bukan select
   var rs = document.querySelectorAll('input[name="cSec"]');
-  for (var i = 0; i < rs.length; i++) rs[i].disabled = kunci;
+  for (var i = 0; i < rs.length; i++) rs[i].disabled = true;
+  if (pick) pick.classList.add('terkunciBox');
   var oc = document.getElementById('cOthersCheck');
-  if (oc) oc.disabled = kunci;
+  if (oc) oc.disabled = true;
+  _notaKunci(true);
+}
+
+function _notaKunci(kunci) {
 
   var nota = document.getElementById('cLockNote');
   if (nota) {

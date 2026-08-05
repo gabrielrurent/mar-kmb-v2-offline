@@ -80,6 +80,10 @@
     .ovTag.l1{background:#4338ca}
     .ovTag.l2{background:#7c3aed}
     .ovJd{margin-top:4px;background:var(--card);border-radius:6px;padding:5px 7px;font-size:12px}
+    /* Kolom acuan grup yang terkunci — garis luar MERAH, bukan sekadar pudar.
+       Pudar terbaca seperti "belum aktif"; merah terbaca "sengaja dikunci". */
+    .terkunci{border:2px solid var(--error)!important;background:#FEF2F2!important;cursor:not-allowed}
+    .terkunciBox{outline:2px solid var(--error);outline-offset:2px;border-radius:8px}
     .obinfo{font-size:12px;color:#B45309;font-weight:700;margin-bottom:6px}
     .modal{display:none;position:fixed;inset:0;background:rgba(17,24,39,.55);z-index:50;align-items:flex-end;justify-content:center}
     .sheet{background:var(--card);width:100%;max-width:560px;border-radius:var(--radius) var(--radius) 0 0;padding:20px 16px 24px;max-height:92vh;overflow-y:auto}
@@ -244,12 +248,21 @@
       <label>Work Condition *</label>
       <select class="inp" id="cWc" onchange="updateCreatePreview()"></select>
 
+      <!-- Kolom ACUAN grup dipindah ke sini (tepat di bawah Work Condition):
+           mode 'unit' → pemilih unit, mode 'job' → pemilih job. Yang dipilih
+           sekali harus terbaca lebih dulu; yang berulang di bawahnya. -->
+      <div id="cAnchorSlot"></div>
+
       <!-- Tyreman path -->
       <div id="cTyreGroup">
-        <label>Joblist Tyreman *</label>
-        <select class="inp" id="cComp" onchange="onCompChange()"></select>
-        <label>Unit *</label>
-        <select class="inp" id="cTyreUnit"></select>
+        <div id="cTyreJobWrap">
+          <label>Joblist Tyreman *</label>
+          <select class="inp" id="cComp" onchange="onCompChange()"></select>
+        </div>
+        <div id="cTyreUnitWrap">
+          <label>Unit *</label>
+          <select class="inp" id="cTyreUnit"></select>
+        </div>
       </div>
 
       <!-- Others fields (semua section) -->
@@ -274,9 +287,11 @@
       <div id="cCascadeGroup" style="display:none">
         <div id="cUnitGroup"><label>Unit *</label><select class="inp" id="cUnit" onchange="onCasUnitOrModel()"></select></div>
         <div id="cModelGroup" style="display:none"><label>Model Rebuild *</label><select class="inp" id="cModel" onchange="onCasUnitOrModel()"></select></div>
-        <label>Component *</label><select class="inp" id="cCasComp" onchange="onCasComp()"></select>
-        <label>Sub Component *</label><select class="inp" id="cCasSub" onchange="onCasSub()"></select>
-        <label>Job *</label><select class="inp" id="cCasJob" onchange="updateCreatePreview()"></select>
+        <div id="cJobWrap">
+          <label>Component *</label><select class="inp" id="cCasComp" onchange="onCasComp()"></select>
+          <label>Sub Component *</label><select class="inp" id="cCasSub" onchange="onCasSub()"></select>
+          <label>Job *</label><select class="inp" id="cCasJob" onchange="updateCreatePreview()"></select>
+        </div>
       </div>
 
       <label>Keterangan (opsional)</label>
