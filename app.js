@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v55';
+var APP_VERSION = 'v56';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -569,6 +569,31 @@ function syncNow(manual) {
       if (_syncAgain) { _syncAgain = false; return syncNow(false); }   // kirim sisa antrean
     });
 }
+/**
+ * Selaraskan status WO di salinan lokal begitu operasinya BERHASIL, tanpa
+ * menunggu tarikan data berikutnya.
+ *
+ * Kenapa perlu: badgeFor() sengaja tidak memakai op 'done' supaya badge bisa
+ * berkembang L1 → L2 → Approved. Tapi kalau wo.status lokal belum diperbarui,
+ * badge sempat mundur ke "Perlu diisi" di sela antara operasi selesai dan
+ * data baru tiba. Mekanik membaca itu sebagai gagal, lalu menekan Kirim lagi.
+ */
+function _perbaruiStatusLokal(op) {
+  var baru = null;
+  if (op.action === 'submit_work') baru = 'pending_supervisor';
+  else if (op.action === 'approve_l1') baru = 'pending_superintendent';
+  else if (op.action === 'approve_l2') baru = 'approved';
+  else if (op.action === 'reject') baru = 'rejected';
+  else if (op.action === 'request_transfer') baru = 'pending_transfer';
+  if (!baru || !op.wo_id) return;
+  // Server bisa memberi tahu status sebenarnya (mis. kiriman ulang yang sudah
+  // lewat tahap) — pakai itu bila ada, jangan tebak.
+  if (op.result && op.result.status) baru = String(op.result.status);
+  ['wos','pending','active'].forEach(function(k) {
+    (S[k] || []).forEach(function(w) { if (String(w.id) === String(op.wo_id)) w.status = baru; });
+  });
+}
+
 function flushOutbox() {
   var sent = 0;
   return obAll().then(function(items) {
@@ -589,7 +614,20 @@ function flushOutbox() {
         _idx++;
         showSendProgress(_idx, _total, it);   // "📤 Mengirim 2/5 · L1 WO-xxx"
         return api(it.action, it.payload, it.op_id).then(function(r) {
-          if (r.success) { it.status='done'; it.result=r.result; sent++; }
+          if (r.success) {
+            it.status='done'; it.result=r.result; sent++;
+            // Perbarui salinan lokal SEKARANG, jangan menunggu pullWos().
+            // Tanpa ini badge berkedip "Dikirim → Perlu diisi → L1": begitu op
+            // selesai, badgeFor() jatuh ke wo.status yang MASIH status lama,
+            // sampai tarikan data berikutnya tiba. Kedipan itulah yang membuat
+            // mekanik mengira kiriman gagal lalu menekan Kirim lagi.
+            _perbaruiStatusLokal(it);
+            // Kiriman ulang yang ditolak dengan halus oleh server: beri tahu
+            // apa adanya, jangan diam — mekanik perlu tahu kerjanya sudah masuk.
+            if (it.result && it.result.already_submitted) {
+              toast('✅ ' + (it.wo_number || 'WO') + ' memang sudah terkirim sebelumnya');
+            }
+          }
           else { it.status='failed'; it.error=(typeof r.error==='string')?r.error:JSON.stringify(r.error); }
           // Perbarui tampilan tiap item selesai — antrean panjang tidak terlihat macet.
           return obPut(it).then(function(){ return refreshOutbox(); }).then(function(){ renderAll(); });
@@ -794,7 +832,13 @@ function queueSubmit() {
  * WO berpindah ke meja L1 dan mekanik tak bisa lagi mengubahnya sendiri.
  * Timer kosong → arahkan ke Isi Manual, jangan diam-diam mengirim 0 jam.
  */
+// WO yang kirimannya sedang diproses — penjaga tekan-dua-kali. obPut() ke
+// IndexedDB butuh waktu; sebelum selesai, kartu belum berubah dan tombol masih
+// bisa ditekan lagi, menghasilkan operasi kedua yang pasti ditolak server.
+var _sedangKirim = {};
+
 function kirimLangsung(woId) {
+  if (_sedangKirim[woId]) { toast('⏳ Sedang diproses…'); return; }
   var wo = null;
   for (var i=0;i<S.wos.length;i++) if (String(S.wos[i].id)===String(woId)) wo = S.wos[i];
   if (!wo) return;
@@ -811,8 +855,13 @@ function kirimLangsung(woId) {
                start.toLocaleString('id-ID') + ' → ' + now.toLocaleString('id-ID') + '\n\n' +
                'Setelah terkirim, WO masuk ke meja L1 dan tidak bisa Anda ubah lagi.\n' +
                'Perlu mengoreksi jam atau menambah keterangan? Pakai ✍️ Isi Manual.')) return;
+  _sedangKirim[woId] = true;
   stopLiveTimer(woId);
-  _antreSubmit(wo, start.toISOString(), now.toISOString(), '', '', '');
+  // Kunci dilepas setelah operasi benar-benar masuk antrean — saat itu kartunya
+  // sudah berbadge "Dikirim" dan tombolnya tak lagi dirender.
+  _antreSubmit(wo, start.toISOString(), now.toISOString(), '', '', '')
+    .then(function(){ delete _sedangKirim[woId]; })
+    .catch(function(){ delete _sedangKirim[woId]; });
 }
 
 /* ── M2: Create WO form ── */
