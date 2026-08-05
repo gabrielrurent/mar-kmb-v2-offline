@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v58';
+var APP_VERSION = 'v59';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -1003,12 +1003,70 @@ function getCreateSection() {
   var r = document.querySelector('input[name="cSec"]:checked');
   return r ? r.value : 'tyreman';
 }
-function populateTyreUnits() {
-  var sel = document.getElementById('cTyreUnit');
-  sel.innerHTML = '<option value="">-- Pilih Unit --</option>';
-  var units = S.refs.units || [];
-  for (var i=0;i<units.length;i++) sel.innerHTML += '<option value="'+esc(units[i].unit_id)+'">'+esc(units[i].unit_name)+' ('+esc(units[i].unit_type)+')</option>';
+/**
+ * Isi sebuah dropdown unit dengan URUTAN yang masuk akal di lapangan.
+ *
+ * Config_Units memuat 87 unit — seluruh armada yang pernah tersentuh, termasuk
+ * milik rental lain. Menampilkannya sebagai satu daftar panjang membuat pembuat
+ * WO harus mengais setiap kali, padahal 90% pekerjaan ada di segelintir unit.
+ *
+ * Urutan kelompok:
+ *   1. Model utama section ini (tyreman → hauler) — pekerjaan hariannya
+ *   2. Model lain milik kita
+ *   3. Rental / luar (is_on_hand = FALSE)
+ * TIDAK ada yang disembunyikan — sesekali kita memang membantu unit luar.
+ *
+ * @param {HTMLSelectElement} sel
+ * @param {Array} units       daftar unit yang sudah lolos saringan lain
+ * @param {string} modelUtama model yang didahulukan ('' = tak ada)
+ * @param {string} cari       teks pencarian (kosong = semua)
+ * @param {boolean} pakaiModelAttr sertakan data-model (dipakai cascade field)
+ */
+function isiDropdownUnit(sel, units, modelUtama, cari, pakaiModelAttr) {
+  if (!sel) return;
+  var q = _nm(cari);
+  var utama = [], lain = [], luar = [];
+  (units || []).forEach(function(u) {
+    if (q) {
+      var teks = _nm(u.unit_name) + ' ' + _nm(u.unit_type) + ' ' + _nm(u.unit_model);
+      if (teks.indexOf(q) === -1) return;
+    }
+    if (u.is_on_hand === false) luar.push(u);
+    else if (modelUtama && _nm(u.unit_model) === _nm(modelUtama)) utama.push(u);
+    else lain.push(u);
+  });
+
+  function opsi(u) {
+    return '<option value="'+esc(u.unit_id)+'"' +
+           (pakaiModelAttr ? ' data-model="'+esc(_nm(u.unit_model))+'"' : '') + '>' +
+           esc(u.unit_name)+' ('+esc(u.unit_type)+')</option>';
+  }
+  function grup(judul, arr) {
+    if (!arr.length) return '';
+    return '<optgroup label="'+esc(judul)+' ('+arr.length+')">' + arr.map(opsi).join('') + '</optgroup>';
+  }
+
+  var html = '<option value="">-- Pilih Unit --</option>';
+  html += grup(modelUtama ? ('★ ' + String(modelUtama).toUpperCase() + ' — harian') : '★ Unit harian', utama);
+  html += grup('Unit lain', lain);
+  html += grup('Rental / luar', luar);
+  sel.innerHTML = html;
+
+  var total = utama.length + lain.length + luar.length;
+  if (q && total === 0) sel.innerHTML = '<option value="">(tidak ada unit cocok "'+esc(cari)+'")</option>';
 }
+
+/** Model yang didahulukan per section. Tyreman sehari-hari di hauler. */
+function _modelUtamaSection(sec) { return (sec === 'tyreman') ? 'hauler' : ''; }
+
+function populateTyreUnits() {
+  var cari = document.getElementById('cCariTyreUnit');
+  isiDropdownUnit(document.getElementById('cTyreUnit'), S.refs.units || [],
+                  'hauler', cari ? cari.value : '', false);
+}
+/** Dipanggil kotak pencarian — isi ulang dropdown tanpa menyentuh yang lain. */
+function cariUnitTyre() { populateTyreUnits(); }
+function cariUnitField() { populateCascadeRoot('field'); }
 /**
  * Samakan bentuk unit_model sebelum dibandingkan.
  * pull_create_refs mengirim units.unit_model SUDAH huruf kecil + trim, tapi
@@ -1024,14 +1082,13 @@ function populateCascadeRoot(sec) {
   if (sec === 'field') {
     var validModels = {};
     for (var j=0;j<jobs.length;j++) validModels[_nm(jobs[j].unit_model)] = true;
-    var sel = document.getElementById('cUnit');
-    sel.innerHTML = '<option value="">-- Pilih Unit --</option>';
-    var units = S.refs.units||[];
-    for (var u=0;u<units.length;u++) {
-      var um = _nm(units[u].unit_model);
-      if (!um || !validModels[um]) continue;
-      sel.innerHTML += '<option value="'+esc(units[u].unit_id)+'" data-model="'+esc(um)+'">'+esc(units[u].unit_name)+' ('+esc(units[u].unit_type)+')</option>';
-    }
+    // Hanya unit yang modelnya punya job di katalog — saringan lama, tetap.
+    var layak = (S.refs.units||[]).filter(function(u) {
+      var um = _nm(u.unit_model);
+      return um && validModels[um];
+    });
+    var cari = document.getElementById('cCariUnit');
+    isiDropdownUnit(document.getElementById('cUnit'), layak, '', cari ? cari.value : '', true);
   } else {
     var models = {}; for (var mj=0;mj<jobs.length;mj++) models[_nm(jobs[mj].unit_model)]=true;
     var mSel = document.getElementById('cModel');
@@ -1277,7 +1334,8 @@ function hapusBarisGrup(i) { _grupBaris.splice(i, 1); renderGrupBaris(); }
 // dulu — kalau hanya kolom mode saat ini yang dibuka, kolom mode SEBELUMNYA
 // tetap terkunci selamanya. Itu bug nyata: kunci mode 'unit' tak pernah lepas
 // setelah pindah ke mode 'job'.
-var ID_BISA_TERKUNCI = ['cUnit', 'cTyreUnit', 'cCasComp', 'cCasSub', 'cCasJob', 'cComp', 'cWc', 'cModel'];
+var ID_BISA_TERKUNCI = ['cUnit', 'cTyreUnit', 'cCariUnit', 'cCariTyreUnit',
+                        'cCasComp', 'cCasSub', 'cCasJob', 'cComp', 'cWc', 'cModel'];
 
 function _kunciAcuanGrup() {
   var kunci = (_grupMode === 'unit' || _grupMode === 'job') && _grupBaris.length > 0;
@@ -1300,9 +1358,11 @@ function _kunciAcuanGrup() {
   if (!kunci) { _notaKunci(false); return; }
 
   // 2) Kunci yang perlu saja
+  // Kotak pencarian ikut dikunci bersama unitnya — mengetik akan mengisi ulang
+  // dropdown dan MENGHAPUS pilihan yang sudah dikunci.
   var idAcuan = (_grupMode === 'unit')
-    ? ['cUnit', 'cTyreUnit']                       // unit yang dikunci
-    : ['cCasComp', 'cCasSub', 'cCasJob', 'cComp']; // job yang dikunci
+    ? ['cUnit', 'cTyreUnit', 'cCariUnit', 'cCariTyreUnit']  // unit yang dikunci
+    : ['cCasComp', 'cCasSub', 'cCasJob', 'cComp'];          // job yang dikunci
   var idBersama = ['cWc', 'cModel'];               // dipakai seluruh grup
 
   idAcuan.concat(idBersama).forEach(function(id) {

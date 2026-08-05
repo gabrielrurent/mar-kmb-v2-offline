@@ -261,6 +261,7 @@
         </div>
         <div id="cTyreUnitWrap">
           <label>Unit *</label>
+          <input class="inp" id="cCariTyreUnit" placeholder="🔍 ketik nama/tipe unit…" oninput="cariUnitTyre()" style="margin-bottom:4px">
           <select class="inp" id="cTyreUnit"></select>
         </div>
       </div>
@@ -285,7 +286,11 @@
 
       <!-- Cascade path (field/workshop) -->
       <div id="cCascadeGroup" style="display:none">
-        <div id="cUnitGroup"><label>Unit *</label><select class="inp" id="cUnit" onchange="onCasUnitOrModel()"></select></div>
+        <div id="cUnitGroup">
+          <label>Unit *</label>
+          <input class="inp" id="cCariUnit" placeholder="🔍 ketik nama/tipe unit…" oninput="cariUnitField()" style="margin-bottom:4px">
+          <select class="inp" id="cUnit" onchange="onCasUnitOrModel()"></select>
+        </div>
         <div id="cModelGroup" style="display:none"><label>Model Rebuild *</label><select class="inp" id="cModel" onchange="onCasUnitOrModel()"></select></div>
         <div id="cJobWrap">
           <label>Component *</label><select class="inp" id="cCasComp" onchange="onCasComp()"></select>
