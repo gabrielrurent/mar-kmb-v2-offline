@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v63';
+var APP_VERSION = 'v64';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -1616,14 +1616,16 @@ function openApproveForm(woId) {
   // berikon sehingga dua baris itu menjorok sendiri dan sisanya terlihat tak
   // sejajar. Yang utama isinya terbaca sekali lihat, bukan hiasannya.
   document.getElementById('aDesc').innerHTML =
-    '<b>'+esc(a.component_name||'-')+'</b>'+
-    (a.is_others?' <span class="badge" style="background:#0ea5e9">OTHERS</span>':'')+byMechBadge(a)+grupBadge(a)+
+    ketBar(a, a.status === 'pending_superintendent')+
+    '<div style="margin-top:9px"><b>'+esc(a.component_name||'-')+'</b></div>'+
     '<div class="woInfo">'+
       (a.unit_name ? '<span class="k">Unit</span><span class="v">'+esc(a.unit_name)+'</span>' : '')+
       '<span class="k">Lokasi</span><span class="v">'+esc(locLabel(a.location))+'</span>'+
       '<span class="k">Kondisi</span><span class="v">'+esc(wcLabel(a.work_condition))+'</span>'+
       '<span class="k">Waktu kerja</span><span class="v"><b>'+fmtJamMenit(a.actual_hours)+'</b> dari target '+fmtJamMenit(a.target_hours)+
-        (atl ? ' <span class="badge" style="background:'+(atl.status==='on_time'?'#15803d':atl.status==='late'?'#b45309':'#b91c1c')+'">'+esc(atl.label)+' ×'+atl.factor+'</span>' : '')+'</span>'+
+        // Status tepat-waktu sudah jadi satu iris di bilah keterangan di atas;
+        // di sini cukup faktor pengalinya, supaya tak terbaca dua kali.
+        (atl ? ' <span class="sub" style="display:inline;margin:0">(faktor ×'+atl.factor+')</span>' : '')+'</span>'+
       '<span class="k">Base points</span><span class="v">'+(a.base_points||0)+' pts</span>'+
       '<span class="k">Unit factor</span><span class="v">'+(a.unit_factor||1)+' <span class="sub" style="display:inline;margin:0">(tetap)</span></span>'+
       ((a.created_by_name || a.created_by) ? '<span class="k">Pembuat</span><span class="v">'+esc(a.created_by_name || a.created_by)+'</span>' : '')+
@@ -2317,18 +2319,42 @@ function queuedNote(qop){ return '<div class="obinfo">📮 '+esc(opLabel(qop))+'
 // Nama saja — email dihilangkan dari kartu approval (1:1 dgn web). Approver
 // mengenali orang dari namanya; alamat email hanya memenuhi layar HP.
 function teamStr(team){ return (team||[]).map(function(t){ return esc(t.name); }).join(', '); }
-function ovBadges(wo){ return (wo.has_override_spv?'<span class="badge" style="background:#4338ca">SPV override</span>':'')+(wo.has_override_supt?'<span class="badge" style="background:#7c3aed">SUPT override</span>':''); }
-/* Penanda telaah, bukan status: WO yang dibuat mekanik sendiri perlu diperiksa
-   lebih teliti (job, unit, susunan tim) daripada buatan sesama approver.
-   1:1 dengan badge di web (Approval.html). */
-function byMechBadge(wo){ return wo.created_by_is_mechanic ? '<span class="badge" style="background:#6d28d9">👷 Dibuat Mekanik</span>' : ''; }
-/* Konteks grup: approver perlu tahu WO ini bagian dari borongan, karena
-   keputusannya (approve/override/transfer) sering menyangkut baris lain juga. */
-function grupBadge(wo){
-  if (!wo || !wo.wo_group_id) return '';
-  var t = (String(wo.wo_group_mode)==='job') ? '1 job · banyak unit' : '1 unit · banyak job';
-  return '<span class="badge" style="background:#0f766e" title="Bagian dari borongan">📦 '+t+'</span>';
+/** Huruf besar di awal tiap kata: "tyreman" → "Tyreman", "ON TIME" → "On Time". */
+function _kapital(s) {
+  return String(s == null ? '' : s).toLowerCase().replace(/(^|[\s\-\/])(\S)/g, function(m, a, b) {
+    return a + b.toUpperCase();
+  });
 }
+
+/**
+ * Bilah keterangan WO — satu kotak menyambung, terbagi RATA sebanyak isinya.
+ *
+ * Dulu badge-badge ini terpencar di baris judul dan terbaca seperti hiasan
+ * lepas; sebagai satu bilah utuh ia terbaca sebagai "ini keterangan WO-nya".
+ * Tiap iris punya warnanya sendiri supaya artinya terbaca dari warnanya juga,
+ * bukan cuma dari tulisannya — berguna di layar silau.
+ */
+function ketBar(wo, isL2) {
+  var seg = [];
+  seg.push({t: isL2 ? 'L2' : 'L1', c: isL2 ? '#b45309' : '#7c3aed'});
+  if (wo.section) seg.push({t: _kapital(wo.section), c: '#334155'});
+  if (wo.is_others) seg.push({t: 'Others', c: '#0ea5e9'});
+  var tl = wo.timeliness;
+  if (tl) {
+    // Tanpa "×1" — faktornya sudah tercermin di poin, dan di sini yang perlu
+    // dibaca approver hanya tepat waktu atau tidak.
+    seg.push({t: _kapital(tl.label), c: tl.status === 'on_time' ? '#15803d' : (tl.status === 'late' ? '#b45309' : '#b91c1c')});
+  }
+  if (wo.has_override_spv)  seg.push({t: 'Override L1', c: '#4338ca'});
+  if (wo.has_override_supt) seg.push({t: 'Override L2', c: '#6d28d9'});
+  if (wo.created_by_is_mechanic) seg.push({t: 'Dibuat Mekanik', c: '#7e22ce'});
+  if (wo.wo_group_id) seg.push({t: String(wo.wo_group_mode) === 'job' ? '1 Job · Banyak Unit' : '1 Unit · Banyak Job', c: '#0f766e'});
+
+  return '<div class="ketBar">' + seg.map(function(s) {
+    return '<span class="ketSeg" style="background:'+s.c+'">'+esc(s.t)+'</span>';
+  }).join('') + '</div>';
+}
+
 function cancelBtn(wo){ return '<button class="big secondary" onclick="openCancelForm(\''+esc(String(wo.id))+'\',\''+esc(String(wo.wo_number))+'\')">🗑 Batalkan WO</button>'; }
 /* ── TRANSFER WO: keputusan L1 (offline-capable) ── */
 function renderTransferList(){
@@ -2421,13 +2447,11 @@ function renderPendingList(){
     var othersBadge = wo.is_others ? '<span class="badge" style="background:#0ea5e9">OTHERS</span>' : '';
     var tl = wo.timeliness;
     var tlBadge = tl ? '<span class="badge" style="background:'+(tl.status==='on_time'?'#15803d':tl.status==='late'?'#b45309':'#b91c1c')+'">⏱️ '+esc(tl.label)+' ×'+tl.factor+'</span>' : '';
-    html+='<div class="card"><div class="cardTop"><b>'+esc(wo.wo_number)+'</b>'+
-      '<span class="badges">'+
-        '<span class="badge" style="background:'+(isL2?'#b45309':'#7c3aed')+'">'+(isL2?'⏳ L2':'⏳ L1')+'</span>'+
-        '<span class="badge" style="background:#334155">'+esc(wo.section)+'</span>'+
-        othersBadge+tlBadge+ovBadges(wo)+byMechBadge(wo)+grupBadge(wo)+
-      '</span></div>'+
-      '<div class="cardBody"><b>'+esc(wo.component_name||'-')+'</b>'+
+    html+='<div class="card"><div class="cardTop"><b>'+esc(wo.wo_number)+'</b></div>'+
+      // Semua keterangan jadi SATU bilah menyambung di bawah nomor WO —
+      // bukan badge terpencar di baris judul.
+      ketBar(wo, isL2)+
+      '<div class="cardBody" style="margin-top:9px"><b>'+esc(wo.component_name||'-')+'</b>'+
       // Label–nilai sejajar. Tanpa ikon di sini: dulu hanya "Lokasi" berikon,
       // sehingga barisnya menjorok sendiri dan daftar jadi sulit dipindai.
       '<div class="woInfo">'+
