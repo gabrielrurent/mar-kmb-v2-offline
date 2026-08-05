@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v66';
+var APP_VERSION = 'v67';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -2133,59 +2133,78 @@ function salinToken(tok, btn) {
   } else { toast('Salin manual: '+tok); }
 }
 /**
- * Bagian daftar WO mekanik, urut dari yang paling menuntut tindakan.
- * `buka` = keadaan awal terlipat/terbuka; yang butuh dikerjakan dibiarkan
- * terbuka, riwayat dilipat supaya tak mengubur yang aktif.
+ * Menu "WO Saya" — satu kotak per keadaan, urut dari yang paling menuntut
+ * tindakan. Dipilih satu, baru daftarnya muncul.
+ *
+ * Sebelumnya semua keadaan bertumpuk dalam satu layar gulir panjang. Di
+ * lapangan, satu layar = satu hal yang perlu diputuskan jauh lebih mudah
+ * dipakai daripada gulir panjang yang menuntut mekanik memilah sendiri.
  */
 var BAGIAN_WO = [
-  {id:'aktif',    judul:'Perlu Dikerjakan', ikon:'🔧', warna:'#1d4ed8', buka:true,
-   st:['pending_mechanic_work','in_progress']},
-  {id:'transfer', judul:'Menunggu Transfer', ikon:'🔁', warna:'#c2410c', buka:true,
-   st:['pending_transfer']},
-  {id:'pending',  judul:'Menunggu Approval', ikon:'⏳', warna:'#7c3aed', buka:true,
-   st:['pending_supervisor','pending_superintendent']},
-  {id:'approved', judul:'Disetujui',         ikon:'✅', warna:'#15803d', buka:false,
-   st:['approved']},
-  {id:'ditolak',  judul:'Ditolak',           ikon:'❌', warna:'#b91c1c', buka:false,
-   st:['rejected']}
+  {id:'aktif',    judul:'Perlu Dikerjakan', ikon:'🔧', warna:'#1d4ed8',
+   sub:'belum diisi / sedang dikerjakan', st:['pending_mechanic_work','in_progress']},
+  {id:'transfer', judul:'Menunggu Transfer', ikon:'🔁', warna:'#c2410c',
+   sub:'menunggu keputusan L1', st:['pending_transfer']},
+  {id:'pending',  judul:'Menunggu Approval', ikon:'⏳', warna:'#7c3aed',
+   sub:'sudah dikirim, di meja approver', st:['pending_supervisor','pending_superintendent']},
+  {id:'approved', judul:'Disetujui',         ikon:'✅', warna:'#15803d',
+   sub:'poin sudah masuk', st:['approved']},
+  {id:'ditolak',  judul:'Ditolak',           ikon:'❌', warna:'#b91c1c',
+   sub:'perlu Anda periksa', st:['rejected']}
 ];
 
-function toggleBagianWo(id) {
-  if (!S.bagianTutup) S.bagianTutup = {};
-  S.bagianTutup[id] = !S.bagianTutup[id];
-  renderAll();
-}
+function bukaBagianWo(id) { S.woView = id; renderAll(); window.scrollTo(0, 0); }
+function kembaliMenuWo()  { S.woView = null; renderAll(); window.scrollTo(0, 0); }
 
 function renderWos(el) {
   var opByWo={};
   S.outbox.forEach(function(o){if(o.wo_id&&(!opByWo[o.wo_id]||o.created_at>opByWo[o.wo_id].created_at))opByWo[o.wo_id]=o;});
   if (!S.wos.length) { el.innerHTML='<div class="empty">Belum ada kartu WO.<br>Tekan 🔄 Refresh saat ada sinyal.</div>'; return; }
 
-  if (!S.bagianTutup) {
-    S.bagianTutup = {};
-    BAGIAN_WO.forEach(function(b){ if (!b.buka) S.bagianTutup[b.id] = true; });
-  }
   // Kemajuan tiap borongan dihitung dari SELURUH anggotanya, bukan hanya yang
-  // kebetulan ada di bagian ini — kalau tidak, "Terkirim 1 dari 1" akan muncul
-  // di tiap bagian dan angkanya menyesatkan.
+  // kebetulan ada di bagian ini — kalau tidak, borongan yang terbelah antar
+  // bagian akan menampilkan angka yang menyesatkan.
   var totalGrup = {}, kirimGrup = {};
   S.wos.forEach(function(w) {
     var g = String(w.wo_group_id || ''); if (!g) return;
     totalGrup[g] = (totalGrup[g]||0) + 1;
     if (String(w.status) !== 'pending_mechanic_work') kirimGrup[g] = (kirimGrup[g]||0) + 1;
   });
+  function isiBagian(B) {
+    return S.wos.filter(function(w){ return B.st.indexOf(String(w.status)) !== -1; });
+  }
 
+  // ── Daftar satu bagian ──
+  if (S.woView) {
+    var B = null;
+    for (var i=0;i<BAGIAN_WO.length;i++) if (BAGIAN_WO[i].id === S.woView) B = BAGIAN_WO[i];
+    if (!B) { S.woView = null; return renderWos(el); }
+    var isi = isiBagian(B);
+    el.innerHTML =
+      '<button class="btnKembali" onclick="kembaliMenuWo()">← Semua kategori</button>'+
+      '<div class="secHead" style="border-left-color:'+B.warna+';cursor:default;margin-top:0">'+
+        '<span class="secJudul">'+B.ikon+' '+esc(B.judul)+'</span>'+
+        '<span class="secJml" style="background:'+B.warna+'">'+isi.length+'</span>'+
+      '</div>'+
+      (isi.length ? _kartuWo(isi, opByWo, totalGrup, kirimGrup)
+                  : '<div class="empty">Tidak ada WO di kategori ini.</div>');
+    return;
+  }
+
+  // ── Menu ──
   var out = '';
   BAGIAN_WO.forEach(function(B) {
-    var isi = S.wos.filter(function(w){ return B.st.indexOf(String(w.status)) !== -1; });
-    if (!isi.length) return;
-    var tutup = !!S.bagianTutup[B.id];
-    out += '<div class="secHead" style="border-left-color:'+B.warna+'" onclick="toggleBagianWo(\''+B.id+'\')">'+
-             '<span class="secJudul">'+B.ikon+' '+esc(B.judul)+'</span>'+
-             '<span class="secJml" style="background:'+B.warna+'">'+isi.length+'</span>'+
-             '<span class="secPanah">'+(tutup?'▸':'▾')+'</span>'+
-           '</div>';
-    if (!tutup) out += _kartuWo(isi, opByWo, totalGrup, kirimGrup);
+    var n = isiBagian(B).length;
+    // Transfer jarang dipakai — hanya tampil bila memang ada isinya, supaya
+    // menu tidak penuh kategori kosong.
+    if (!n && B.id === 'transfer') return;
+    out += '<button class="menuBox" style="border-left-color:'+B.warna+'" onclick="bukaBagianWo(\''+B.id+'\')">'+
+             '<span class="menuIkon">'+B.ikon+'</span>'+
+             '<span class="menuTeks"><span class="menuJudul">'+esc(B.judul)+'</span>'+
+               '<span class="menuSub">'+esc(B.sub)+'</span></span>'+
+             '<span class="menuJml" style="background:'+(n?B.warna:'#9CA3AF')+'">'+n+'</span>'+
+             '<span class="menuPanah">›</span>'+
+           '</button>';
   });
   el.innerHTML = out;
 }
