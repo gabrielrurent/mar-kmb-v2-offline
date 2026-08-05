@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v56';
+var APP_VERSION = 'v57';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -1050,7 +1050,40 @@ function onCasUnitOrModel() {
   for (var c in comps) sel.innerHTML += '<option value="'+esc(c)+'">'+esc(c)+'</option>';
   document.getElementById('cCasSub').innerHTML = '<option value="">-- Sub Component --</option>';
   document.getElementById('cCasJob').innerHTML = '<option value="">-- Job --</option>';
+  // Mode 'job': job-nya terkunci, tapi ganti unit baru saja membangun ulang
+  // seluruh cascade dan mengosongkan pilihannya. Pulihkan — kalau job itu tak
+  // tersedia untuk model unit baru, tolak unitnya, jangan diam-diam kosong.
+  if (_grupMode === 'job' && _acuanTerkunci && _grupBaris.length) _pulihkanJobTerkunci();
 }
+
+/**
+ * Pilih ulang component → sub → job sesuai acuan yang dikunci, setelah cascade
+ * dibangun ulang karena unit berganti (mode 'job').
+ * Job tak ada untuk model unit itu = unit memang tak cocok → beri tahu jelas.
+ */
+function _pulihkanJobTerkunci() {
+  var selC = document.getElementById('cCasComp');
+  var selS = document.getElementById('cCasSub');
+  var selJ = document.getElementById('cCasJob');
+  if (!selC || !selS || !selJ) return;
+
+  selC.value = _acuanTerkunci.comp || '';
+  if (selC.value !== (_acuanTerkunci.comp || '')) return _jobTakCocok();
+  onCasComp();
+  selS.value = _acuanTerkunci.sub || '';
+  if (selS.value !== (_acuanTerkunci.sub || '')) return _jobTakCocok();
+  onCasSub();
+  selJ.value = _acuanTerkunci.job_id || '';
+  if (selJ.value !== (_acuanTerkunci.job_id || '')) return _jobTakCocok();
+  _kunciAcuanGrup();   // rebuild menghapus disabled — pasang lagi
+  updateCreatePreview();
+}
+function _jobTakCocok() {
+  toast('⚠️ Job yang dikunci tidak tersedia untuk model unit ini — pilih unit lain');
+  var u = document.getElementById('cUnit'); if (u) u.value = '';
+  _kunciAcuanGrup();
+}
+
 function onCasComp() {
   var sec = getCreateSection();
   var jobs = (sec==='workshop') ? (S.refs.jobs_workshop||[]) : (S.refs.jobs_field||[]);
@@ -1127,11 +1160,13 @@ function addTeamMember() {
 // putus di tengah, baris yang sudah sampai tetap sah dan sisanya tetap mengantre.
 var _grupMode = '';      // '' | 'unit' | 'job'
 var _grupBaris = [];     // [{payload, label}]
+var _acuanTerkunci = null;  // {unit_id, job_id, comp, sub} dari baris pertama
 
 function onGrupModeChange() {
   var r = document.querySelector('input[name="cmode"]:checked');
   _grupMode = r ? r.value : '';
   _grupBaris = [];
+  _acuanTerkunci = null;
   var hint = document.getElementById('cModeHint');
   if (_grupMode === 'unit') {
     hint.style.display = 'block';
@@ -1161,6 +1196,16 @@ function tambahBarisGrup() {
       return;
     }
   }
+  // Rekam acuan dari baris PERTAMA — dipakai memulihkan cascade job saat unit
+  // berganti di mode 'job' (ganti unit membangun ulang daftar job).
+  if (!_grupBaris.length) {
+    _acuanTerkunci = {
+      unit_id: d.payload.unit_id || '',
+      job_id: d.payload.job_id || '',
+      comp: document.getElementById('cCasComp') ? document.getElementById('cCasComp').value : '',
+      sub:  document.getElementById('cCasSub') ? document.getElementById('cCasSub').value : ''
+    };
+  }
   _grupBaris.push({payload: d.payload, label: d.label});
   renderGrupBaris();
   // Kosongkan HANYA yang berulang; yang dikunci (unit/job) sengaja dipertahankan
@@ -1172,6 +1217,52 @@ function tambahBarisGrup() {
 }
 
 function hapusBarisGrup(i) { _grupBaris.splice(i, 1); renderGrupBaris(); }
+
+/**
+ * Kunci kolom ACUAN begitu baris pertama masuk daftar.
+ *
+ * Tanpa ini nilainya cuma "dipertahankan", bukan dikunci — mekanik masih bisa
+ * mengganti unit di tengah jalan dan grup berakhir dengan unit campur, padahal
+ * yang dijanjikan "satu unit, banyak job". Terbukti terjadi 4 Agu 2026.
+ *
+ * Yang dikunci:
+ *   selalu      → section & work condition (dipakai bersama seluruh grup)
+ *   mode 'unit' → pemilih unit
+ *   mode 'job'  → cascade component/sub/job (atau joblist tyreman)
+ *
+ * Terbuka lagi saat daftar KOSONG. Jadi kalau baru satu baris dan ternyata
+ * salah pilih, cukup silang baris nomor 1 — persis alur yang diminta.
+ */
+function _kunciAcuanGrup() {
+  var kunci = (_grupMode === 'unit' || _grupMode === 'job') && _grupBaris.length > 0;
+
+  var idAcuan = (_grupMode === 'unit')
+    ? ['cUnit', 'cTyreUnit']                       // unit yang dikunci
+    : ['cCasComp', 'cCasSub', 'cCasJob', 'cComp']; // job yang dikunci
+  var idBersama = ['cWc', 'cModel'];               // dipakai seluruh grup
+
+  idAcuan.concat(idBersama).forEach(function(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.disabled = kunci;
+    el.style.opacity = kunci ? '.6' : '';
+    el.style.cursor = kunci ? 'not-allowed' : '';
+  });
+  // Section: radio, bukan select
+  var rs = document.querySelectorAll('input[name="cSec"]');
+  for (var i = 0; i < rs.length; i++) rs[i].disabled = kunci;
+  var oc = document.getElementById('cOthersCheck');
+  if (oc) oc.disabled = kunci;
+
+  var nota = document.getElementById('cLockNote');
+  if (nota) {
+    nota.style.display = kunci ? 'block' : 'none';
+    nota.innerHTML = kunci
+      ? '🔒 ' + (_grupMode === 'unit' ? 'Unit' : 'Job') + ', section &amp; kondisi terkunci untuk grup ini. ' +
+        'Mau ganti? Silang dulu semua baris di daftar.'
+      : '';
+  }
+}
 
 function renderGrupBaris() {
   var box = document.getElementById('cGrupBox');
@@ -1189,6 +1280,7 @@ function renderGrupBaris() {
       '<button type="button" class="mini gray" onclick="hapusBarisGrup(' + i + ')">✕</button></div>';
   });
   document.getElementById('cGrupList').innerHTML = html;
+  _kunciAcuanGrup();
 }
 
 /**
@@ -1211,7 +1303,7 @@ function simpanGrup() {
   });
   var n = _grupBaris.length;
   Promise.all(tugas).then(refreshOutbox).then(function() {
-    _grupBaris = []; renderGrupBaris();
+    _grupBaris = []; _acuanTerkunci = null; renderGrupBaris();
     closeModal('createModal'); renderAll();
     toast(navigator.onLine ? ('📮 Mengirim ' + n + ' baris...') : ('📮 ' + n + ' baris tersimpan — terkirim saat ada sinyal'));
     syncNow(false);
