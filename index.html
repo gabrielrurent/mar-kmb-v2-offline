@@ -262,7 +262,9 @@
         <div id="cTyreUnitWrap">
           <label>Unit *</label>
           <input class="inp" id="cCariTyreUnit" placeholder="🔍 ketik nama/tipe unit…" oninput="cariUnitTyre()" style="margin-bottom:4px">
-          <select class="inp" id="cTyreUnit"></select>
+          <select class="inp" id="cTyreUnit" onchange="onPilihUnitTyre()"></select>
+          <div class="sub" id="cInfoUnitTyre" style="display:none;margin-top:-8px"></div>
+          <button type="button" class="mini gray" id="cBtnSemuaUnit" onclick="toggleSemuaUnit()" style="margin-bottom:10px">🌐 Tampilkan semua unit</button>
         </div>
       </div>
 
@@ -290,6 +292,8 @@
           <label>Unit *</label>
           <input class="inp" id="cCariUnit" placeholder="🔍 ketik nama/tipe unit…" oninput="cariUnitField()" style="margin-bottom:4px">
           <select class="inp" id="cUnit" onchange="onCasUnitOrModel()"></select>
+          <div class="sub" id="cInfoUnitField" style="display:none;margin-top:-8px"></div>
+          <button type="button" class="mini gray" onclick="toggleSemuaUnit()" style="margin-bottom:10px">🌐 Tampilkan semua unit</button>
         </div>
         <div id="cModelGroup" style="display:none"><label>Model Rebuild *</label><select class="inp" id="cModel" onchange="onCasUnitOrModel()"></select></div>
         <div id="cJobWrap">

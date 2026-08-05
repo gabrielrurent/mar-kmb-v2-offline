@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v59';
+var APP_VERSION = 'v60';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -1022,17 +1022,32 @@ function getCreateSection() {
  * @param {string} cari       teks pencarian (kosong = semua)
  * @param {boolean} pakaiModelAttr sertakan data-model (dipakai cascade field)
  */
-function isiDropdownUnit(sel, units, modelUtama, cari, pakaiModelAttr) {
+// Pembuat WO menekan "tampilkan semua unit" → unit ber-scope 'global' ikut muncul.
+var _tampilSemuaUnit = false;
+function toggleSemuaUnit() {
+  _tampilSemuaUnit = !_tampilSemuaUnit;
+  var b = document.getElementById('cBtnSemuaUnit');
+  if (b) b.textContent = _tampilSemuaUnit ? '🔽 Sembunyikan unit global' : '🌐 Tampilkan semua unit';
+  onCreateSectionChange();   // isi ulang dropdown section yang sedang aktif
+}
+
+function _scopeArr(u) { return (u && u.unit_scope) ? u.unit_scope : []; }
+
+function isiDropdownUnit(sel, units, sectionAktif, cari, pakaiModelAttr) {
   if (!sel) return;
   var q = _nm(cari);
-  var utama = [], lain = [], luar = [];
+  var utama = [], lain = [], global = [], others = [];
+
   (units || []).forEach(function(u) {
     if (q) {
       var teks = _nm(u.unit_name) + ' ' + _nm(u.unit_type) + ' ' + _nm(u.unit_model);
       if (teks.indexOf(q) === -1) return;
     }
-    if (u.is_on_hand === false) luar.push(u);
-    else if (modelUtama && _nm(u.unit_model) === _nm(modelUtama)) utama.push(u);
+    var sc = _scopeArr(u);
+    if (sc.indexOf('others') !== -1) { others.push(u); return; }
+    if (sc.indexOf('global') !== -1) { global.push(u); return; }
+    // KOSONG = milik semua section (perilaku lama, sheet yang belum diisi)
+    if (!sc.length || sc.indexOf(sectionAktif) !== -1) utama.push(u);
     else lain.push(u);
   });
 
@@ -1047,25 +1062,60 @@ function isiDropdownUnit(sel, units, modelUtama, cari, pakaiModelAttr) {
   }
 
   var html = '<option value="">-- Pilih Unit --</option>';
-  html += grup(modelUtama ? ('★ ' + String(modelUtama).toUpperCase() + ' — harian') : '★ Unit harian', utama);
-  html += grup('Unit lain', lain);
-  html += grup('Rental / luar', luar);
+  html += grup('★ Unit ' + (sectionAktif || 'kita'), utama);
+  html += grup('Unit section lain', lain);
+  // 'global' = bukan pegangan harian kita. Disembunyikan sampai diminta, TAPI
+  // tetap bisa dipilih — kita memang sesekali membantu unit rental.
+  if (_tampilSemuaUnit) html += grup('🌐 Global — bukan pegangan harian', global);
+  // Bukan unit sungguhan: memilihnya mengalihkan form ke WO Others.
+  if (others.length) html += grup('📝 Job manual', others);
   sel.innerHTML = html;
 
-  var total = utama.length + lain.length + luar.length;
-  if (q && total === 0) sel.innerHTML = '<option value="">(tidak ada unit cocok "'+esc(cari)+'")</option>';
+  var tampil = utama.length + lain.length + (_tampilSemuaUnit ? global.length : 0) + others.length;
+  if (q && tampil === 0) {
+    sel.innerHTML = '<option value="">(tidak ada unit cocok "'+esc(cari)+'"' +
+      (global.length && !_tampilSemuaUnit ? ' — coba "tampilkan semua unit"' : '') + ')</option>';
+  }
+  // Beri tahu bahwa masih ada yang tersembunyi; tanpa ini orang mengira unitnya hilang.
+  var info = (sel.id === 'cTyreUnit') ? document.getElementById('cInfoUnitTyre')
+                                      : document.getElementById('cInfoUnitField');
+  if (info) {
+    var sisa = _tampilSemuaUnit ? 0 : global.length;
+    info.style.display = sisa ? 'block' : 'none';
+    info.textContent = sisa ? ('🌐 ' + sisa + ' unit global disembunyikan — tekan "Tampilkan semua unit" bila perlu.') : '';
+  }
 }
 
-/** Model yang didahulukan per section. Tyreman sehari-hari di hauler. */
-function _modelUtamaSection(sec) { return (sec === 'tyreman') ? 'hauler' : ''; }
+/**
+ * Unit ber-scope 'others' bukan unit sungguhan — memilihnya mengalihkan form
+ * ke pembuatan WO Others, lalu pilihan unitnya dikosongkan lagi.
+ */
+function cekUnitOthers(sel) {
+  if (!sel || !sel.value) return false;
+  var units = (S.refs && S.refs.units) || [];
+  for (var i = 0; i < units.length; i++) {
+    if (String(units[i].unit_id) !== String(sel.value)) continue;
+    if (_scopeArr(units[i]).indexOf('others') === -1) return false;
+    sel.value = '';
+    var oc = document.getElementById('cOthersCheck');
+    if (!oc || oc.disabled) { toast('📝 Job manual (Others) hanya untuk L1/L2'); return true; }
+    oc.checked = true;
+    onPwaOthersToggle();
+    toast('📝 Beralih ke job manual (Others)');
+    return true;
+  }
+  return false;
+}
 
 function populateTyreUnits() {
   var cari = document.getElementById('cCariTyreUnit');
   isiDropdownUnit(document.getElementById('cTyreUnit'), S.refs.units || [],
-                  'hauler', cari ? cari.value : '', false);
+                  'tyreman', cari ? cari.value : '', false);
 }
 /** Dipanggil kotak pencarian — isi ulang dropdown tanpa menyentuh yang lain. */
 function cariUnitTyre() { populateTyreUnits(); }
+/** Dipanggil saat unit tyreman dipilih — tangkap unit ber-scope 'others'. */
+function onPilihUnitTyre() { cekUnitOthers(document.getElementById('cTyreUnit')); updateCreatePreview(); }
 function cariUnitField() { populateCascadeRoot('field'); }
 /**
  * Samakan bentuk unit_model sebelum dibandingkan.
@@ -1088,7 +1138,7 @@ function populateCascadeRoot(sec) {
       return um && validModels[um];
     });
     var cari = document.getElementById('cCariUnit');
-    isiDropdownUnit(document.getElementById('cUnit'), layak, '', cari ? cari.value : '', true);
+    isiDropdownUnit(document.getElementById('cUnit'), layak, 'field', cari ? cari.value : '', true);
   } else {
     var models = {}; for (var mj=0;mj<jobs.length;mj++) models[_nm(jobs[mj].unit_model)]=true;
     var mSel = document.getElementById('cModel');
@@ -1100,6 +1150,9 @@ function populateCascadeRoot(sec) {
   document.getElementById('cCasJob').innerHTML = '<option value="">-- Job --</option>';
 }
 function onCasUnitOrModel() {
+  // Unit ber-scope 'others' bukan unit sungguhan — tangkap sebelum cascade
+  // dibangun, kalau tidak cascade akan mencari model dari unit yang tak punya.
+  if (cekUnitOthers(document.getElementById('cUnit'))) return;
   var sec = getCreateSection();
   var jobs = (sec==='workshop') ? (S.refs.jobs_workshop||[]) : (S.refs.jobs_field||[]);
   var model = '';
