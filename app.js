@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v65';
+var APP_VERSION = 'v66';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -2132,14 +2132,70 @@ function salinToken(tok, btn) {
     navigator.clipboard.writeText(tok).then(sukses).catch(function(){ toast('Salin manual: '+tok); });
   } else { toast('Salin manual: '+tok); }
 }
+/**
+ * Bagian daftar WO mekanik, urut dari yang paling menuntut tindakan.
+ * `buka` = keadaan awal terlipat/terbuka; yang butuh dikerjakan dibiarkan
+ * terbuka, riwayat dilipat supaya tak mengubur yang aktif.
+ */
+var BAGIAN_WO = [
+  {id:'aktif',    judul:'Perlu Dikerjakan', ikon:'🔧', warna:'#1d4ed8', buka:true,
+   st:['pending_mechanic_work','in_progress']},
+  {id:'transfer', judul:'Menunggu Transfer', ikon:'🔁', warna:'#c2410c', buka:true,
+   st:['pending_transfer']},
+  {id:'pending',  judul:'Menunggu Approval', ikon:'⏳', warna:'#7c3aed', buka:true,
+   st:['pending_supervisor','pending_superintendent']},
+  {id:'approved', judul:'Disetujui',         ikon:'✅', warna:'#15803d', buka:false,
+   st:['approved']},
+  {id:'ditolak',  judul:'Ditolak',           ikon:'❌', warna:'#b91c1c', buka:false,
+   st:['rejected']}
+];
+
+function toggleBagianWo(id) {
+  if (!S.bagianTutup) S.bagianTutup = {};
+  S.bagianTutup[id] = !S.bagianTutup[id];
+  renderAll();
+}
+
 function renderWos(el) {
   var opByWo={};
   S.outbox.forEach(function(o){if(o.wo_id&&(!opByWo[o.wo_id]||o.created_at>opByWo[o.wo_id].created_at))opByWo[o.wo_id]=o;});
   if (!S.wos.length) { el.innerHTML='<div class="empty">Belum ada kartu WO.<br>Tekan 🔄 Refresh saat ada sinyal.</div>'; return; }
+
+  if (!S.bagianTutup) {
+    S.bagianTutup = {};
+    BAGIAN_WO.forEach(function(b){ if (!b.buka) S.bagianTutup[b.id] = true; });
+  }
+  // Kemajuan tiap borongan dihitung dari SELURUH anggotanya, bukan hanya yang
+  // kebetulan ada di bagian ini — kalau tidak, "Terkirim 1 dari 1" akan muncul
+  // di tiap bagian dan angkanya menyesatkan.
+  var totalGrup = {}, kirimGrup = {};
+  S.wos.forEach(function(w) {
+    var g = String(w.wo_group_id || ''); if (!g) return;
+    totalGrup[g] = (totalGrup[g]||0) + 1;
+    if (String(w.status) !== 'pending_mechanic_work') kirimGrup[g] = (kirimGrup[g]||0) + 1;
+  });
+
+  var out = '';
+  BAGIAN_WO.forEach(function(B) {
+    var isi = S.wos.filter(function(w){ return B.st.indexOf(String(w.status)) !== -1; });
+    if (!isi.length) return;
+    var tutup = !!S.bagianTutup[B.id];
+    out += '<div class="secHead" style="border-left-color:'+B.warna+'" onclick="toggleBagianWo(\''+B.id+'\')">'+
+             '<span class="secJudul">'+B.ikon+' '+esc(B.judul)+'</span>'+
+             '<span class="secJml" style="background:'+B.warna+'">'+isi.length+'</span>'+
+             '<span class="secPanah">'+(tutup?'▸':'▾')+'</span>'+
+           '</div>';
+    if (!tutup) out += _kartuWo(isi, opByWo, totalGrup, kirimGrup);
+  });
+  el.innerHTML = out;
+}
+
+/** Render kartu (dengan pengelompokan borongan) untuk satu bagian. */
+function _kartuWo(daftar, opByWo, totalGrup, kirimGrup) {
   // Kelompokkan per WO Group. Baris tanpa grup jadi kelompok sendiri-sendiri,
   // jadi tampilan WO tunggal tidak berubah sama sekali.
   var grup = [], indeks = {};
-  S.wos.forEach(function(wo) {
+  daftar.forEach(function(wo) {
     var g = String(wo.wo_group_id || '');
     var kunci = g || ('__solo__' + wo.id);
     // `=== undefined`, BUKAN `!indeks[kunci]` — indeks grup pertama adalah 0,
@@ -2166,7 +2222,11 @@ function renderWos(el) {
       var judul = (G.mode === 'job')
         ? esc(w0.component_name || '-') + ' · ' + G.baris.length + ' unit'
         : esc(w0.unit_name || 'Workshop') + ' · ' + G.baris.length + ' job';
-      var sudah = G.baris.filter(function(w){ return String(w.status) !== 'pending_mechanic_work'; }).length;
+      // Dihitung dari SELURUH anggota borongan, bukan hanya yang ada di bagian
+      // ini — kalau tidak, angkanya menyesatkan saat borongan terbelah bagian.
+      var gid = String(w0.wo_group_id || '');
+      var sudah = gid ? (kirimGrup[gid] || 0) : G.baris.filter(function(w){ return String(w.status) !== 'pending_mechanic_work'; }).length;
+      var totalG = gid ? (totalGrup[gid] || G.baris.length) : G.baris.length;
       html += '<div class="grupHead">'+
         '<div class="cardTop" style="margin-bottom:4px"><b>📦 '+judul+'</b>'+
         '<span class="badge" style="background:#0f766e">'+(G.mode==='job'?'1 JOB · BANYAK UNIT':'1 UNIT · BANYAK JOB')+'</span></div>'+
@@ -2174,7 +2234,7 @@ function renderWos(el) {
         timKerjaStr(w0.team)+
         // Kemajuan borongan: mekanik perlu tahu tinggal berapa lagi, bukan
         // menghitung sendiri dari kartu yang panjang.
-        '<br>✅ Terkirim '+sudah+' dari '+G.baris.length+' baris</div>'+
+        '<br>✅ Terkirim '+sudah+' dari '+totalG+' baris</div>'+
       '</div>';
     }
 
@@ -2209,7 +2269,7 @@ function renderWos(el) {
     }
     html += '</div>';
   });
-  el.innerHTML=html;
+  return html;
 }
 
 /**

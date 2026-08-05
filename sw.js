@@ -1,4 +1,4 @@
-var CACHE = 'mar-v65';
+var CACHE = 'mar-v66';
 var ASSETS = ['./', './index.html', './app.js', './manifest.json', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', function(e) {
   // cache:'reload' — WAJIB. addAll() memakai cache HTTP biasa, jadi app.js bisa

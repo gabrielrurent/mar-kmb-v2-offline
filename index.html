@@ -151,6 +151,18 @@
             padding:8px 10px;font-size:12px;font-weight:800;color:#fff;
             box-shadow:0 1px 3px rgba(0,0,0,.18)}
     .awChip .awNote{font-weight:600;opacity:.9;font-size:11px}
+    /* ── KEPALA BAGIAN (WO Saya) ─────────────────────────────────────────────
+       Daftar mekanik dipilah per keadaan. Tanpa ini WO yang sudah disetujui
+       dan yang ditolak ikut menumpuk di antara yang masih harus dikerjakan,
+       dan yang paling menuntut tindakan justru terkubur paling bawah. */
+    .secHead{display:flex;align-items:center;gap:9px;cursor:pointer;user-select:none;
+             background:var(--card);border:1px solid var(--border);border-left:4px solid var(--border);
+             border-radius:var(--radius-sm);padding:11px 13px;margin:14px 0 10px}
+    .secHead:first-child{margin-top:0}
+    .secJudul{flex:1;font-size:14px;font-weight:800;color:var(--text)}
+    .secJml{min-width:24px;text-align:center;color:#fff;font-size:11px;font-weight:800;
+            border-radius:99px;padding:3px 8px}
+    .secPanah{font-size:13px;color:var(--text-secondary);font-weight:800}
     .obinfo{font-size:12px;color:#B45309;font-weight:700;margin-bottom:6px}
     .modal{display:none;position:fixed;inset:0;background:rgba(17,24,39,.55);z-index:50;align-items:flex-end;justify-content:center}
     .sheet{background:var(--card);width:100%;max-width:560px;border-radius:var(--radius) var(--radius) 0 0;padding:20px 16px 24px;max-height:92vh;overflow-y:auto}
