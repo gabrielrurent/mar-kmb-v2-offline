@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v60';
+var APP_VERSION = 'v61';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -1108,15 +1108,11 @@ function cekUnitOthers(sel) {
 }
 
 function populateTyreUnits() {
-  var cari = document.getElementById('cCariTyreUnit');
-  isiDropdownUnit(document.getElementById('cTyreUnit'), S.refs.units || [],
-                  'tyreman', cari ? cari.value : '', false);
+  isiDropdownUnit(document.getElementById('cTyreUnit'), S.refs.units || [], 'tyreman', '', false);
 }
-/** Dipanggil kotak pencarian — isi ulang dropdown tanpa menyentuh yang lain. */
-function cariUnitTyre() { populateTyreUnits(); }
+
 /** Dipanggil saat unit tyreman dipilih — tangkap unit ber-scope 'others'. */
 function onPilihUnitTyre() { cekUnitOthers(document.getElementById('cTyreUnit')); updateCreatePreview(); }
-function cariUnitField() { populateCascadeRoot('field'); }
 /**
  * Samakan bentuk unit_model sebelum dibandingkan.
  * pull_create_refs mengirim units.unit_model SUDAH huruf kecil + trim, tapi
@@ -1137,8 +1133,7 @@ function populateCascadeRoot(sec) {
       var um = _nm(u.unit_model);
       return um && validModels[um];
     });
-    var cari = document.getElementById('cCariUnit');
-    isiDropdownUnit(document.getElementById('cUnit'), layak, 'field', cari ? cari.value : '', true);
+    isiDropdownUnit(document.getElementById('cUnit'), layak, 'field', '', true);
   } else {
     var models = {}; for (var mj=0;mj<jobs.length;mj++) models[_nm(jobs[mj].unit_model)]=true;
     var mSel = document.getElementById('cModel');
@@ -1387,8 +1382,7 @@ function hapusBarisGrup(i) { _grupBaris.splice(i, 1); renderGrupBaris(); }
 // dulu — kalau hanya kolom mode saat ini yang dibuka, kolom mode SEBELUMNYA
 // tetap terkunci selamanya. Itu bug nyata: kunci mode 'unit' tak pernah lepas
 // setelah pindah ke mode 'job'.
-var ID_BISA_TERKUNCI = ['cUnit', 'cTyreUnit', 'cCariUnit', 'cCariTyreUnit',
-                        'cCasComp', 'cCasSub', 'cCasJob', 'cComp', 'cWc', 'cModel'];
+var ID_BISA_TERKUNCI = ['cUnit', 'cTyreUnit', 'cCasComp', 'cCasSub', 'cCasJob', 'cComp', 'cWc', 'cModel'];
 
 function _kunciAcuanGrup() {
   var kunci = (_grupMode === 'unit' || _grupMode === 'job') && _grupBaris.length > 0;
@@ -1403,19 +1397,20 @@ function _kunciAcuanGrup() {
   });
   var rsAll = document.querySelectorAll('input[name="cSec"]');
   for (var a = 0; a < rsAll.length; a++) rsAll[a].disabled = false;
-  var pick = document.getElementById('cSecPicker');
-  if (pick) pick.classList.remove('terkunciBox');
+  // Tandai KOTAKnya, bukan cuma select di dalamnya — di layar terang, bingkai
+  // merah selebar kotak jauh lebih cepat terbaca daripada garis tipis.
+  ['cSecBox','cWcBox','cUnitGroup','cTyreUnitWrap','cJobWrap','cTyreJobWrap'].forEach(function(id){
+    var b = document.getElementById(id); if (b) b.classList.remove('terkunciBox');
+  });
   var ocAll = document.getElementById('cOthersCheck');
   if (ocAll) ocAll.disabled = false;
 
   if (!kunci) { _notaKunci(false); return; }
 
   // 2) Kunci yang perlu saja
-  // Kotak pencarian ikut dikunci bersama unitnya — mengetik akan mengisi ulang
-  // dropdown dan MENGHAPUS pilihan yang sudah dikunci.
   var idAcuan = (_grupMode === 'unit')
-    ? ['cUnit', 'cTyreUnit', 'cCariUnit', 'cCariTyreUnit']  // unit yang dikunci
-    : ['cCasComp', 'cCasSub', 'cCasJob', 'cComp'];          // job yang dikunci
+    ? ['cUnit', 'cTyreUnit']                       // unit yang dikunci
+    : ['cCasComp', 'cCasSub', 'cCasJob', 'cComp']; // job yang dikunci
   var idBersama = ['cWc', 'cModel'];               // dipakai seluruh grup
 
   idAcuan.concat(idBersama).forEach(function(id) {
@@ -1426,7 +1421,11 @@ function _kunciAcuanGrup() {
   });
   var rs = document.querySelectorAll('input[name="cSec"]');
   for (var i = 0; i < rs.length; i++) rs[i].disabled = true;
-  if (pick) pick.classList.add('terkunciBox');
+  var kotakKunci = ['cSecBox', 'cWcBox'].concat(
+    (_grupMode === 'unit') ? ['cUnitGroup', 'cTyreUnitWrap'] : ['cJobWrap', 'cTyreJobWrap']);
+  kotakKunci.forEach(function(id){
+    var b = document.getElementById(id); if (b) b.classList.add('terkunciBox');
+  });
   var oc = document.getElementById('cOthersCheck');
   if (oc) oc.disabled = true;
   _notaKunci(true);

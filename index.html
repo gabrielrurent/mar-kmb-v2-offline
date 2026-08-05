@@ -84,6 +84,22 @@
        Pudar terbaca seperti "belum aktif"; merah terbaca "sengaja dikunci". */
     .terkunci{border:2px solid var(--error)!important;background:#FEF2F2!important;cursor:not-allowed}
     .terkunciBox{outline:2px solid var(--error);outline-offset:2px;border-radius:8px}
+    /* ── KOTAK ISIAN (fbox) ──────────────────────────────────────────────────
+       Tiap keputusan dikotakkan sendiri. Form ini diisi mekanik sambil berdiri
+       di lapangan, bersarung tangan, silau, dan perhatian terbagi — deretan
+       label+select yang menyambung tanpa jeda membuat orang melewati satu
+       kolom atau memencet yang salah. Satu kotak = satu hal yang diputuskan. */
+    .fbox{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);
+          padding:12px;margin-bottom:10px}
+    .fbox>label:first-child,.fboxHead{display:block;font-size:11px;font-weight:800;
+          letter-spacing:.05em;text-transform:uppercase;color:var(--text-secondary);margin-bottom:7px}
+    .fbox .inp,.fbox select{margin:0 0 8px}
+    .fbox .inp:last-child,.fbox select:last-child{margin-bottom:0}
+    .fbox .secPicker{margin:0}
+    .fbox.wajib{border-left:3px solid var(--primary)}
+    .fbox.opsional{border-left:3px solid var(--border)}
+    /* Kotak yang seluruh acuannya terkunci — merah, sekali lihat langsung jelas */
+    .fbox.terkunciBox{outline:none;border:2px solid var(--error);background:#FEF2F2}
     .obinfo{font-size:12px;color:#B45309;font-weight:700;margin-bottom:6px}
     .modal{display:none;position:fixed;inset:0;background:rgba(17,24,39,.55);z-index:50;align-items:flex-end;justify-content:center}
     .sheet{background:var(--card);width:100%;max-width:560px;border-radius:var(--radius) var(--radius) 0 0;padding:20px 16px 24px;max-height:92vh;overflow-y:auto}
@@ -235,18 +251,25 @@
 
       <!-- WO GROUP: satu borongan = beberapa baris job, tiap baris tetap WO utuh.
            Dua arah, karena pola kerja lapangan memang dua macam. -->
-      <label>Cara pembuatan *</label>
-      <div class="secPicker" id="cModePicker">
-        <label class="secOpt"><input type="radio" name="cmode" value="" checked onchange="onGrupModeChange()"><span class="secCard">1 WO saja</span></label>
-        <label class="secOpt"><input type="radio" name="cmode" value="unit" onchange="onGrupModeChange()"><span class="secCard">1 unit · banyak job</span></label>
-        <label class="secOpt"><input type="radio" name="cmode" value="job" onchange="onGrupModeChange()"><span class="secCard">1 job · banyak unit</span></label>
+      <div class="fbox wajib">
+        <label>Cara pembuatan</label>
+        <div class="secPicker" id="cModePicker">
+          <label class="secOpt"><input type="radio" name="cmode" value="" checked onchange="onGrupModeChange()"><span class="secCard">1 WO saja</span></label>
+          <label class="secOpt"><input type="radio" name="cmode" value="unit" onchange="onGrupModeChange()"><span class="secCard">1 unit · banyak job</span></label>
+          <label class="secOpt"><input type="radio" name="cmode" value="job" onchange="onGrupModeChange()"><span class="secCard">1 job · banyak unit</span></label>
+        </div>
+        <div class="sub" id="cModeHint" style="display:none;margin:7px 0 0"></div>
       </div>
-      <div class="sub" id="cModeHint" style="display:none"></div>
 
-      <label>Section *</label>
-      <div class="secPicker" id="cSecPicker"></div>
-      <label>Work Condition *</label>
-      <select class="inp" id="cWc" onchange="updateCreatePreview()"></select>
+      <div class="fbox wajib" id="cSecBox">
+        <label>Section</label>
+        <div class="secPicker" id="cSecPicker"></div>
+      </div>
+
+      <div class="fbox wajib" id="cWcBox">
+        <label>Work Condition</label>
+        <select class="inp" id="cWc" onchange="updateCreatePreview()"></select>
+      </div>
 
       <!-- Kolom ACUAN grup dipindah ke sini (tepat di bawah Work Condition):
            mode 'unit' → pemilih unit, mode 'job' → pemilih job. Yang dipilih
@@ -255,60 +278,65 @@
 
       <!-- Tyreman path -->
       <div id="cTyreGroup">
-        <div id="cTyreJobWrap">
-          <label>Joblist Tyreman *</label>
+        <div class="fbox wajib" id="cTyreJobWrap">
+          <label>Joblist Tyreman</label>
           <select class="inp" id="cComp" onchange="onCompChange()"></select>
         </div>
-        <div id="cTyreUnitWrap">
-          <label>Unit *</label>
-          <input class="inp" id="cCariTyreUnit" placeholder="🔍 ketik nama/tipe unit…" oninput="cariUnitTyre()" style="margin-bottom:4px">
+        <div class="fbox wajib" id="cTyreUnitWrap">
+          <label>Unit</label>
           <select class="inp" id="cTyreUnit" onchange="onPilihUnitTyre()"></select>
-          <div class="sub" id="cInfoUnitTyre" style="display:none;margin-top:-8px"></div>
-          <button type="button" class="mini gray" id="cBtnSemuaUnit" onclick="toggleSemuaUnit()" style="margin-bottom:10px">🌐 Tampilkan semua unit</button>
+          <div class="sub" id="cInfoUnitTyre" style="display:none;margin:7px 0 0"></div>
+          <button type="button" class="mini gray" id="cBtnSemuaUnit" onclick="toggleSemuaUnit()">🌐 Tampilkan semua unit</button>
         </div>
       </div>
 
       <!-- Others fields (semua section) -->
-      <div id="cOthersWrap" style="display:none">
-        <label>Deskripsi Job *</label>
+      <div class="fbox wajib" id="cOthersWrap" style="display:none">
+        <label>Job manual (Others)</label>
+        <span class="fboxHead" style="margin:0 0 4px">Deskripsi job</span>
         <input class="inp" id="cOthersDesc" placeholder="cth: perbaikan velg custom" oninput="updateCreatePreview()">
         <div class="row2">
-          <div><label>Base Points *</label><input type="number" class="inp" id="cOthersBp" min="0.01" step="any" placeholder="0.5" oninput="updateCreatePreview()"></div>
-          <div><label>Target Hours *</label><input type="number" class="inp" id="cOthersTh" min="0.01" step="any" placeholder="2" oninput="updateCreatePreview()"></div>
+          <div><span class="fboxHead" style="margin:0 0 4px">Base points</span><input type="number" class="inp" id="cOthersBp" min="0.01" step="any" placeholder="0.5" oninput="updateCreatePreview()"></div>
+          <div><span class="fboxHead" style="margin:0 0 4px">Target hours</span><input type="number" class="inp" id="cOthersTh" min="0.01" step="any" placeholder="2" oninput="updateCreatePreview()"></div>
         </div>
-        <label>Unit Factor *</label>
+        <span class="fboxHead" style="margin:0 0 4px">Unit factor</span>
         <input type="number" class="inp" id="cOthersUf" min="0.1" step="0.01" placeholder="1.0" oninput="updateCreatePreview()">
-        <div class="sub" style="margin-top:-8px">Pengali kesulitan (mis. 1.0 standar, 1.2 kompleks)</div>
+        <div class="sub" style="margin:7px 0 0">Pengali kesulitan (mis. 1.0 standar, 1.2 kompleks)</div>
       </div>
 
       <!-- Others toggle (field/workshop) -->
-      <div id="cOthersCheckRow" style="display:none">
-        <label class="chkRow"><input type="checkbox" id="cOthersCheck" onchange="onPwaOthersToggle()">Job manual (Others) — di luar katalog</label>
+      <div class="fbox opsional" id="cOthersCheckRow" style="display:none">
+        <label class="chkRow" style="margin:0"><input type="checkbox" id="cOthersCheck" onchange="onPwaOthersToggle()">📝 Job manual (Others) — di luar katalog</label>
       </div>
 
       <!-- Cascade path (field/workshop) -->
       <div id="cCascadeGroup" style="display:none">
-        <div id="cUnitGroup">
-          <label>Unit *</label>
-          <input class="inp" id="cCariUnit" placeholder="🔍 ketik nama/tipe unit…" oninput="cariUnitField()" style="margin-bottom:4px">
+        <div class="fbox wajib" id="cUnitGroup">
+          <label>Unit</label>
           <select class="inp" id="cUnit" onchange="onCasUnitOrModel()"></select>
-          <div class="sub" id="cInfoUnitField" style="display:none;margin-top:-8px"></div>
-          <button type="button" class="mini gray" onclick="toggleSemuaUnit()" style="margin-bottom:10px">🌐 Tampilkan semua unit</button>
+          <div class="sub" id="cInfoUnitField" style="display:none;margin:7px 0 0"></div>
+          <button type="button" class="mini gray" onclick="toggleSemuaUnit()">🌐 Tampilkan semua unit</button>
         </div>
-        <div id="cModelGroup" style="display:none"><label>Model Rebuild *</label><select class="inp" id="cModel" onchange="onCasUnitOrModel()"></select></div>
-        <div id="cJobWrap">
-          <label>Component *</label><select class="inp" id="cCasComp" onchange="onCasComp()"></select>
-          <label>Sub Component *</label><select class="inp" id="cCasSub" onchange="onCasSub()"></select>
-          <label>Job *</label><select class="inp" id="cCasJob" onchange="updateCreatePreview()"></select>
+        <div class="fbox wajib" id="cModelGroup" style="display:none"><label>Model Rebuild</label><select class="inp" id="cModel" onchange="onCasUnitOrModel()"></select></div>
+        <div class="fbox wajib" id="cJobWrap">
+          <label>Job yang dikerjakan</label>
+          <span class="fboxHead" style="margin:0 0 4px">Component</span><select class="inp" id="cCasComp" onchange="onCasComp()"></select>
+          <span class="fboxHead" style="margin:0 0 4px">Sub component</span><select class="inp" id="cCasSub" onchange="onCasSub()"></select>
+          <span class="fboxHead" style="margin:0 0 4px">Job</span><select class="inp" id="cCasJob" onchange="updateCreatePreview()"></select>
         </div>
       </div>
 
-      <label>Keterangan (opsional)</label>
-      <input class="inp" id="cKet" placeholder="cth: unit di pit 3">
-      <label>Tim Mekanik *</label>
-      <label class="chkRow" style="margin:2px 0 8px"><input type="checkbox" id="cCrossFunc" onchange="onCrossFuncToggle()">🔓 Tampilkan mekanik semua section (lintas fungsi)</label>
-      <div id="cTeamList"></div>
-      <button class="mini" onclick="addTeamMember()" style="margin-bottom:10px">+ Tambah Mekanik</button>
+      <div class="fbox wajib">
+        <label>Tim Mekanik</label>
+        <label class="chkRow" style="margin:0 0 8px"><input type="checkbox" id="cCrossFunc" onchange="onCrossFuncToggle()">🔓 Tampilkan mekanik semua section (lintas fungsi)</label>
+        <div id="cTeamList"></div>
+        <button class="mini" onclick="addTeamMember()">+ Tambah Mekanik</button>
+      </div>
+
+      <div class="fbox opsional">
+        <label>Keterangan (opsional)</label>
+        <input class="inp" id="cKet" placeholder="cth: unit di pit 3">
+      </div>
       <div class="panel" id="cPreview" style="display:none;background:#EFF6FF;border-color:#BFDBFE;padding:11px;margin-bottom:10px">
         <div class="sub" style="margin:0 0 4px;font-weight:700;color:#1e40af">📊 Preview Poin</div>
         <div id="cPreviewBody" style="font-size:13px;color:#111827"></div>
