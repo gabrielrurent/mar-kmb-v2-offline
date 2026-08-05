@@ -112,6 +112,24 @@
     .woLineNo{display:inline-flex;align-items:center;justify-content:center;
               min-width:22px;height:22px;border-radius:6px;background:#0f766e;color:#fff;
               font-size:11px;font-weight:800;margin-right:7px;flex-shrink:0}
+    /* ── BADGE & INFO WO ─────────────────────────────────────────────────────
+       cardTop memakai space-between, jadi badge terlempar ke tepi dan L1
+       berjauhan dari section. Dikumpulkan dalam satu wadah rapat di kanan. */
+    .badges{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;margin-left:auto}
+    /* Label–nilai sejajar. Sebelumnya keterangan ditulis mengalir dengan
+       pemisah titik dan hanya SEBAGIAN baris berikon, sehingga barisnya
+       menjorok tidak rata dan sulit dipindai. Ikon dibuang dari sini —
+       yang utama isinya terbaca, bukan hiasannya. */
+    .woInfo{display:grid;grid-template-columns:max-content 1fr;gap:4px 12px;
+            font-size:13px;line-height:1.45;margin-top:7px}
+    .woInfo .k{color:var(--text-secondary);white-space:nowrap}
+    .woInfo .v{color:var(--text);min-width:0;overflow-wrap:anywhere}
+    .woInfo .v b{color:var(--text)}
+    /* Nilai dari sistem di panel override — dibedakan dari isian supaya jelas
+       mana angka yang sedang ditimpa dan mana yang sedang diketik. */
+    .ovSis{font-size:12px;color:var(--text-secondary);background:var(--bg-secondary);
+           border-radius:6px;padding:5px 8px;margin-bottom:7px}
+    .ovSis b{color:var(--text)}
     .obinfo{font-size:12px;color:#B45309;font-weight:700;margin-bottom:6px}
     .modal{display:none;position:fixed;inset:0;background:rgba(17,24,39,.55);z-index:50;align-items:flex-end;justify-content:center}
     .sheet{background:var(--card);width:100%;max-width:560px;border-radius:var(--radius) var(--radius) 0 0;padding:20px 16px 24px;max-height:92vh;overflow-y:auto}
@@ -383,35 +401,53 @@
           <span id="ovArrow" style="font-size:14px;color:var(--primary);font-weight:800">▸</span>
         </div>
         <div id="ovBody" style="display:none;margin-top:9px">
-          <div class="row2">
-            <div><label>Base Points</label><input type="number" class="inp" id="aOvBp" min="0" step="any" placeholder="pakai bawaan" oninput="perbaruiPenjagaOverride()"></div>
-            <div><label>Durasi kerja saat ini</label><input class="inp" id="aOvActualNow" disabled style="opacity:.7"></div>
+          <div class="sub" style="margin:0 0 9px">Biarkan kosong bila tidak perlu diubah — nilai dari sistem yang dipakai.</div>
+
+          <!-- Tiap hal yang bisa diubah dikotakkan sendiri, dengan nilai sistem
+               ditulis terang di atasnya. Tanpa itu approver tak tahu angka apa
+               yang sedang dia timpa. -->
+          <div class="fbox opsional">
+            <label>Base points</label>
+            <div class="ovSis">Dari sistem: <b id="aOvBpSis">-</b></div>
+            <input type="number" class="inp" id="aOvBp" min="0" step="any" placeholder="ubah di sini (poin)" oninput="perbaruiPenjagaOverride()">
           </div>
 
-          <label>Target Jam</label>
-          <div class="row2">
-            <div><input type="number" class="inp" id="aOvTgtJam" min="0" step="1" placeholder="jam" oninput="perbaruiPenjagaOverride()"></div>
-            <div><input type="number" class="inp" id="aOvTgtMenit" min="0" max="59" step="1" placeholder="menit" oninput="perbaruiPenjagaOverride()"></div>
+          <div class="fbox opsional">
+            <label>Target waktu</label>
+            <div class="ovSis">Dari sistem: <b id="aOvTgtSis">-</b></div>
+            <div class="row2">
+              <div><span class="fboxHead" style="margin:0 0 4px">Jam</span><input type="number" class="inp" id="aOvTgtJam" min="0" step="1" placeholder="ubah di sini (jam)" oninput="perbaruiPenjagaOverride()"></div>
+              <div><span class="fboxHead" style="margin:0 0 4px">Menit</span><input type="number" class="inp" id="aOvTgtMenit" min="0" max="59" step="1" placeholder="ubah di sini (menit)" oninput="perbaruiPenjagaOverride()"></div>
+            </div>
+            <div class="sub" style="margin:0">Jam dan menit DIJUMLAHKAN. Mau target 45 menit? Isi jam <b>0</b>, menit <b>45</b>.</div>
           </div>
 
           <!-- ⏱️ JALUR UANG: actual_hours → faktor ketepatan waktu → poin → rupiah -->
-          <label>⏱️ Waktu Kerja (koreksi jam mekanik)</label>
-          <div class="row2">
-            <div><span class="sub" style="margin:0">Mulai</span><input type="datetime-local" class="inp" id="aOvStart" onchange="aOvHitungDurasi();perbaruiPenjagaOverride()"></div>
-            <div><span class="sub" style="margin:0">Selesai</span><input type="datetime-local" class="inp" id="aOvEnd" onchange="aOvHitungDurasi();perbaruiPenjagaOverride()"></div>
+          <div class="fbox opsional">
+            <label>Waktu kerja (koreksi jam mekanik)</label>
+            <div class="ovSis">Tercatat sekarang: <b id="aOvActualNow">-</b></div>
+            <div class="row2">
+              <div><span class="fboxHead" style="margin:0 0 4px">Mulai</span><input type="datetime-local" class="inp" id="aOvStart" onchange="aOvHitungDurasi();perbaruiPenjagaOverride()"></div>
+              <div><span class="fboxHead" style="margin:0 0 4px">Selesai</span><input type="datetime-local" class="inp" id="aOvEnd" onchange="aOvHitungDurasi();perbaruiPenjagaOverride()"></div>
+            </div>
+            <div id="aOvDurBox" style="background:#FFFBEB;border:1px solid #FDE68A;color:#92400E;border-radius:8px;padding:8px 10px;font-size:13px;font-weight:700">Durasi baru: <span id="aOvDurText">-</span></div>
+            <div class="sub" id="aOvPartialHint" style="display:none;color:#B45309;margin:7px 0 0"></div>
           </div>
-          <div id="aOvDurBox" style="background:#FFFBEB;border:1px solid #FDE68A;color:#92400E;border-radius:8px;padding:8px 10px;font-size:13px;font-weight:700;margin-bottom:8px">Durasi: <span id="aOvDurText">-</span></div>
-          <div class="sub" id="aOvPartialHint" style="display:none;color:#B45309"></div>
 
-          <label>Tim Mekanik <span class="sub" style="display:inline;margin:0">(tiap anggota poin penuh)</span></label>
-          <div id="aOvTeam"></div>
-          <button type="button" class="mini gray" onclick="aOvAddMember()" style="margin-bottom:6px">+ Tambah Mekanik</button>
+          <div class="fbox opsional">
+            <label>Tim mekanik</label>
+            <div class="ovSis">Tiap anggota mendapat poin penuh</div>
+            <div id="aOvTeam"></div>
+            <button type="button" class="mini gray" onclick="aOvAddMember()">+ Tambah Mekanik</button>
+          </div>
 
           <!-- Judgment: berjenjang — tulisan L1 diwarisi L2, L2 boleh ubah/hapus -->
-          <label>🗒️ Judgment / Catatan Approver (opsional)</label>
-          <div class="sub" style="margin:0 0 4px">Alasan kenapa pengerjaan lama atau menyimpang. Tampil di dashboard.</div>
-          <div class="sub" id="aOvJdSource" style="display:none;background:var(--primary-soft);border-radius:6px;padding:5px 7px;margin:0 0 6px"></div>
-          <textarea class="inp" id="aOvJudgment" rows="3" maxlength="500" placeholder="contoh: menunggu part datang, unit harus dilangsir dulu..." style="resize:vertical;font-family:inherit" oninput="perbaruiPenjagaOverride()"></textarea>
+          <div class="fbox opsional">
+            <label>Judgment / catatan approver</label>
+            <div class="ovSis">Alasan kenapa pengerjaan lama atau menyimpang. Tampil di dashboard.</div>
+            <div class="sub" id="aOvJdSource" style="display:none;background:var(--primary-soft);border-radius:6px;padding:5px 7px;margin:0 0 6px"></div>
+            <textarea class="inp" id="aOvJudgment" rows="3" maxlength="500" placeholder="ubah di sini — contoh: menunggu part datang, unit harus dilangsir dulu…" style="resize:vertical;font-family:inherit" oninput="perbaruiPenjagaOverride()"></textarea>
+          </div>
 
           <!-- Sengaja tetap "mini" — lebih kecil dari Approve. Approve yang utama;
                override hanya pelengkap. Yang mencegah salah pencet adalah

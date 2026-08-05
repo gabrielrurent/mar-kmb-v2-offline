@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v62';
+var APP_VERSION = 'v63';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -1612,19 +1612,28 @@ function openApproveForm(woId) {
   var a = activeApproval;
   document.getElementById('aTitle').textContent = a.wo_number;
   var atl = a.timeliness;
-  document.getElementById('aDesc').innerHTML = '<b>'+esc(a.component_name||'-')+'</b>'+(a.is_others?' <span class="badge" style="background:#0ea5e9">OTHERS</span>':'')+byMechBadge(a)+grupBadge(a)+'<br>'+
-    (a.unit_name?'🚜 '+esc(a.unit_name)+'<br>':'')+
-    '📍 Lokasi: '+esc(locLabel(a.location))+'<br>'+
-    'Kondisi: '+esc(wcLabel(a.work_condition))+'<br>'+
-    'Base Points: '+(a.base_points||0)+' pts<br>'+
-    'Target: '+fmtJamMenit(a.target_hours)+' · Aktual: '+fmtJamMenit(a.actual_hours)+
-    (atl ? ' ('+esc(atl.label)+' ×'+atl.factor+')' : '')+'<br>'+
-    'Unit Factor: '+(a.unit_factor||1)+' 🔒<br>'+
-    // Part/HM/KM disembunyikan di layar approval (1 Agu 2026) — 1:1 dgn web
-    (a.created_by_name || a.created_by ? '<br>👤 Pembuat: '+esc(a.created_by_name || a.created_by) : '')+
-    (a.keterangan ? '<br>📝 '+esc(a.keterangan) : '');
-  document.getElementById('aTeam').textContent = 'Tim: '+(a.team||[]).map(function(t){return t.name;}).join(', ');
-  document.getElementById('aStatus').textContent = 'Status: '+a.status;
+  // Label–nilai sejajar, tanpa ikon per baris. Dulu hanya unit & lokasi yang
+  // berikon sehingga dua baris itu menjorok sendiri dan sisanya terlihat tak
+  // sejajar. Yang utama isinya terbaca sekali lihat, bukan hiasannya.
+  document.getElementById('aDesc').innerHTML =
+    '<b>'+esc(a.component_name||'-')+'</b>'+
+    (a.is_others?' <span class="badge" style="background:#0ea5e9">OTHERS</span>':'')+byMechBadge(a)+grupBadge(a)+
+    '<div class="woInfo">'+
+      (a.unit_name ? '<span class="k">Unit</span><span class="v">'+esc(a.unit_name)+'</span>' : '')+
+      '<span class="k">Lokasi</span><span class="v">'+esc(locLabel(a.location))+'</span>'+
+      '<span class="k">Kondisi</span><span class="v">'+esc(wcLabel(a.work_condition))+'</span>'+
+      '<span class="k">Waktu kerja</span><span class="v"><b>'+fmtJamMenit(a.actual_hours)+'</b> dari target '+fmtJamMenit(a.target_hours)+
+        (atl ? ' <span class="badge" style="background:'+(atl.status==='on_time'?'#15803d':atl.status==='late'?'#b45309':'#b91c1c')+'">'+esc(atl.label)+' ×'+atl.factor+'</span>' : '')+'</span>'+
+      '<span class="k">Base points</span><span class="v">'+(a.base_points||0)+' pts</span>'+
+      '<span class="k">Unit factor</span><span class="v">'+(a.unit_factor||1)+' <span class="sub" style="display:inline;margin:0">(tetap)</span></span>'+
+      ((a.created_by_name || a.created_by) ? '<span class="k">Pembuat</span><span class="v">'+esc(a.created_by_name || a.created_by)+'</span>' : '')+
+      '<span class="k">Tim</span><span class="v">'+(a.team||[]).map(function(t){return esc(t.name);}).join(', ')+'</span>'+
+      (a.keterangan ? '<span class="k">Keterangan</span><span class="v">'+esc(a.keterangan)+'</span>' : '')+
+    '</div>';
+  // Tim & status sudah masuk daftar di atas — elemen lama dikosongkan supaya
+  // tidak tampil dua kali.
+  document.getElementById('aTeam').textContent = '';
+  document.getElementById('aStatus').textContent = '';
   var isL2 = (a.status === 'pending_superintendent');
   document.getElementById('aBtnL1').style.display = isL2 ? 'none' : 'block';
   document.getElementById('aBtnL2').style.display = isL2 ? 'block' : 'none';
@@ -1637,8 +1646,14 @@ function openApproveForm(woId) {
   document.getElementById('aOvTgtMenit').value = _th ? Math.round((_th - Math.floor(_th)) * 60) : '';
   document.getElementById('aOvStart').value = toDtLocal(a.start_time);
   document.getElementById('aOvEnd').value = toDtLocal(a.end_time);
+  // Nilai SISTEM ditulis terang di tiap kotak override — tanpa itu approver
+  // tak tahu angka apa yang sedang dia timpa, dan itu jalur uang.
   var _actNow = document.getElementById('aOvActualNow');
-  if (_actNow) _actNow.value = a.actual_hours ? fmtJamMenit(a.actual_hours) : '-';
+  if (_actNow) _actNow.textContent = a.actual_hours ? fmtJamMenit(a.actual_hours) : '-';
+  var _bpSis = document.getElementById('aOvBpSis');
+  if (_bpSis) _bpSis.textContent = (a.base_points || 0) + ' poin';
+  var _tgSis = document.getElementById('aOvTgtSis');
+  if (_tgSis) _tgSis.textContent = a.target_hours ? fmtJamMenit(a.target_hours) : '-';
   // WO yang pernah ditransfer: picker hanya mengoreksi sesi TERAKHIR — jam sesi
   // sebelumnya (partial_hours) tetap ditambahkan server-side, jangan bikin kaget.
   var _ph = parseFloat(a.partial_hours) || 0;
@@ -2406,14 +2421,23 @@ function renderPendingList(){
     var othersBadge = wo.is_others ? '<span class="badge" style="background:#0ea5e9">OTHERS</span>' : '';
     var tl = wo.timeliness;
     var tlBadge = tl ? '<span class="badge" style="background:'+(tl.status==='on_time'?'#15803d':tl.status==='late'?'#b45309':'#b91c1c')+'">⏱️ '+esc(tl.label)+' ×'+tl.factor+'</span>' : '';
-    html+='<div class="card"><div class="cardTop"><b>'+esc(wo.wo_number)+'</b><span class="badge" style="background:'+(isL2?'#b45309':'#7c3aed')+'">'+(isL2?'⏳ L2':'⏳ L1')+'</span>'+
-      '<span class="badge" style="background:#334155">'+esc(wo.section)+'</span>'+othersBadge+tlBadge+ovBadges(wo)+byMechBadge(wo)+grupBadge(wo)+'</div>'+
-      '<div class="cardBody"><b>'+esc(wo.component_name||'-')+'</b>'+(wo.unit_name?' · '+esc(wo.unit_name):'')+'<br>'+
-      '📍 Lokasi: '+esc(locLabel(wo.location))+'<br>'+
-      'Kondisi: '+esc(wcLabel(wo.work_condition))+' · Aktual: '+fmtJamMenit(wo.actual_hours)+' · Target: '+fmtJamMenit(wo.target_hours)+'<br>'+
-      'Base: '+(wo.base_points||0)+' pts · Unit Factor: '+(wo.unit_factor||1)+' 🔒<br>'+
-
-      '<br>👥 Tim: '+teamStr(wo.team)+'</div>'+
+    html+='<div class="card"><div class="cardTop"><b>'+esc(wo.wo_number)+'</b>'+
+      '<span class="badges">'+
+        '<span class="badge" style="background:'+(isL2?'#b45309':'#7c3aed')+'">'+(isL2?'⏳ L2':'⏳ L1')+'</span>'+
+        '<span class="badge" style="background:#334155">'+esc(wo.section)+'</span>'+
+        othersBadge+tlBadge+ovBadges(wo)+byMechBadge(wo)+grupBadge(wo)+
+      '</span></div>'+
+      '<div class="cardBody"><b>'+esc(wo.component_name||'-')+'</b>'+
+      // Label–nilai sejajar. Tanpa ikon di sini: dulu hanya "Lokasi" berikon,
+      // sehingga barisnya menjorok sendiri dan daftar jadi sulit dipindai.
+      '<div class="woInfo">'+
+        (wo.unit_name ? '<span class="k">Unit</span><span class="v">'+esc(wo.unit_name)+'</span>' : '')+
+        '<span class="k">Lokasi</span><span class="v">'+esc(locLabel(wo.location))+'</span>'+
+        '<span class="k">Kondisi</span><span class="v">'+esc(wcLabel(wo.work_condition))+'</span>'+
+        '<span class="k">Waktu</span><span class="v"><b>'+fmtJamMenit(wo.actual_hours)+'</b> dari target '+fmtJamMenit(wo.target_hours)+'</span>'+
+        '<span class="k">Poin</span><span class="v">'+(wo.base_points||0)+' pts × unit '+(wo.unit_factor||1)+'</span>'+
+        '<span class="k">Tim</span><span class="v">'+teamStr(wo.team)+'</span>'+
+      '</div></div>'+
       (wo.keterangan?'<div class="ket">📝 '+esc(wo.keterangan)+'</div>':'')+
       (function(){ var q=queuedOpFor(wo.id); return q ? queuedNote(q)
         : '<button class="big" onclick="openApproveForm(\''+esc(String(wo.id))+'\')">📋 Review & Approve</button>'+cancelBtn(wo); })()+'</div>';
