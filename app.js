@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v67';
+var APP_VERSION = 'v68';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -1656,6 +1656,23 @@ function openApproveForm(woId) {
   if (_bpSis) _bpSis.textContent = (a.base_points || 0) + ' poin';
   var _tgSis = document.getElementById('aOvTgtSis');
   if (_tgSis) _tgSis.textContent = a.target_hours ? fmtJamMenit(a.target_hours) : '-';
+  // Dropdown pindah unit — SELURUH unit, tanpa saringan section/model/global
+  // (keputusan Gabriel). Approver sedang mengoreksi, jadi tak boleh dibatasi
+  // oleh aturan yang berlaku saat WO dibuat.
+  var _uSel = document.getElementById('aOvUnit');
+  if (_uSel) {
+    var _units = (S.refs && S.refs.units) || [];
+    var _now = String(a.unit_id || '');
+    var _h = '<option value="">— tidak diubah —</option>';
+    _units.forEach(function(u) {
+      _h += '<option value="'+esc(u.unit_id)+'"'+(String(u.unit_id)===_now?' selected':'')+'>'+
+            esc(u.unit_name)+' ('+esc(u.unit_type)+')</option>';
+    });
+    _uSel.innerHTML = _h;
+    if (!_units.length) _uSel.innerHTML = '<option value="">(tekan 🔄 Refresh untuk memuat daftar unit)</option>';
+    var _uSis = document.getElementById('aOvUnitSis');
+    if (_uSis) _uSis.textContent = a.unit_name || _now || '-';
+  }
   // WO yang pernah ditransfer: picker hanya mengoreksi sesi TERAKHIR — jam sesi
   // sebelumnya (partial_hours) tetap ditambahkan server-side, jangan bikin kaget.
   var _ph = parseFloat(a.partial_hours) || 0;
@@ -1835,8 +1852,14 @@ function _bacaPerubahanOverride() {
   var jdLama = String(activeApproval.judgment || '').trim();
   var jdChanged = (jdBaru !== jdLama);
 
+  // Pindah unit — dropdown kosong berarti "tidak diubah", bukan "kosongkan".
+  var uSel = document.getElementById('aOvUnit');
+  var uBaru = uSel ? String(uSel.value || '') : '';
+  var uLama = String(activeApproval.unit_id || '');
+  var unitChanged = (uBaru !== '' && uBaru !== uLama);
+
   var bpChanged = (bp !== '');
-  if (!bpChanged && !timeChanged && !teamChanged && !tgtChanged && !jdChanged) return kosong;
+  if (!bpChanged && !timeChanged && !teamChanged && !tgtChanged && !jdChanged && !unitChanged) return kosong;
 
   var payload = { wo_id:activeApproval.id };
   if (bpChanged) payload.base_points = parseFloat(bp);
@@ -1847,6 +1870,7 @@ function _bacaPerubahanOverride() {
   }
   if (teamChanged) payload.team = team;
   if (jdChanged) payload.judgment = jdBaru;
+  if (unitChanged) payload.unit_id = uBaru;
   return {payload: payload, ubah: true, salah: ''};
 }
 
@@ -1904,6 +1928,11 @@ function queueOverride() {
     if (payload.target_hours !== undefined) activeApproval.target_hours = payload.target_hours;
     if (payload.start_time) { activeApproval.start_time = payload.start_time; activeApproval.end_time = payload.end_time; }
     if (payload.judgment !== undefined) activeApproval.judgment = payload.judgment;
+    if (payload.unit_id) {
+      activeApproval.unit_id = payload.unit_id;
+      var _uu = ((S.refs && S.refs.units) || []).filter(function(u){ return String(u.unit_id) === String(payload.unit_id); })[0];
+      if (_uu) activeApproval.unit_name = _uu.unit_name + ' (' + _uu.unit_type + ')';
+    }
     if (payload.team) {
       var mechs = (S.refs && S.refs.mechanics) || [];
       activeApproval.team = payload.team.map(function(t) {

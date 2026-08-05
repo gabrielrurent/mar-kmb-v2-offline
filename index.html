@@ -485,6 +485,14 @@
             <div class="sub" id="aOvPartialHint" style="display:none;color:#B45309;margin:7px 0 0"></div>
           </div>
 
+          <!-- ⚠️ JALUR UANG: unit_id → unit_factor → poin → rupiah -->
+          <div class="fbox opsional">
+            <label>Unit (pindah unit)</label>
+            <div class="ovSis">Sekarang: <b id="aOvUnitSis">-</b></div>
+            <select class="inp" id="aOvUnit" onchange="perbaruiPenjagaOverride()"></select>
+            <div class="sub" style="margin:0">Seluruh unit ditampilkan tanpa saringan. Mengganti unit ikut mengubah <b>unit factor</b>, jadi poinnya berubah.</div>
+          </div>
+
           <div class="fbox opsional">
             <label>Tim mekanik</label>
             <div class="ovSis">Tiap anggota mendapat poin penuh</div>
