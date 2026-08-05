@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v61';
+var APP_VERSION = 'v62';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -2149,18 +2149,28 @@ function renderWos(el) {
       var judul = (G.mode === 'job')
         ? esc(w0.component_name || '-') + ' · ' + G.baris.length + ' unit'
         : esc(w0.unit_name || 'Workshop') + ' · ' + G.baris.length + ' job';
-      html += '<div class="cardTop"><b>📦 '+judul+'</b>'+
+      var sudah = G.baris.filter(function(w){ return String(w.status) !== 'pending_mechanic_work'; }).length;
+      html += '<div class="grupHead">'+
+        '<div class="cardTop" style="margin-bottom:4px"><b>📦 '+judul+'</b>'+
         '<span class="badge" style="background:#0f766e">'+(G.mode==='job'?'1 JOB · BANYAK UNIT':'1 UNIT · BANYAK JOB')+'</span></div>'+
         '<div class="cardBody">📍 '+esc(locLabel(w0.location))+' · Kondisi: '+esc(wcLabel(w0.work_condition))+
-        timKerjaStr(w0.team)+'</div>';
+        timKerjaStr(w0.team)+
+        // Kemajuan borongan: mekanik perlu tahu tinggal berapa lagi, bukan
+        // menghitung sendiri dari kartu yang panjang.
+        '<br>✅ Terkirim '+sudah+' dari '+G.baris.length+' baris</div>'+
+      '</div>';
     }
 
-    G.baris.forEach(function(wo) {
+    G.baris.forEach(function(wo, idx) {
       var op=opByWo[wo.id]; var b=badgeFor(wo,op);
       var canFill=String(wo.status)==='pending_mechanic_work'&&(!op||op.status==='failed');
-      // Di dalam grup tiap baris diberi bingkai sendiri; WO tunggal tetap polos.
-      html += banyak ? '<div style="border-top:1px solid var(--border);padding-top:10px;margin-top:10px">' : '';
-      html += '<div class="cardTop"><b>'+esc(wo.wo_number)+'</b><span class="badge" style="background:'+b[1]+'">'+b[0]+'</span>'+
+      // Di dalam borongan tiap baris DIKOTAKKAN sendiri + diberi nomor urut.
+      // Tanpa sekat tegas, timer & tombol milik baris berbeda terlihat menyatu
+      // dan mekanik kehilangan jejak sedang mengerjakan yang mana.
+      html += banyak ? '<div class="woLine">' : '';
+      html += '<div class="cardTop">'+
+        '<b>'+(banyak ? '<span class="woLineNo">'+(idx+1)+'</span>' : '')+esc(wo.wo_number)+'</b>'+
+        '<span class="badge" style="background:'+b[1]+'">'+b[0]+'</span>'+
         (wo.is_others?'<span class="badge" style="background:#0ea5e9">OTHERS</span>':'')+'</div>'+
         '<div class="cardBody"><b>'+esc(wo.component_name||'-')+'</b>'+(wo.unit_name?' · '+esc(wo.unit_name):'')+(wo.target_hours?' · Target: '+fmtJamMenit(wo.target_hours):'')+
         (banyak ? '' : '<br>📍 '+esc(locLabel(wo.location))+' · Kondisi: '+esc(wcLabel(wo.work_condition))+timKerjaStr(wo.team))+'</div>'+

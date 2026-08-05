@@ -100,6 +100,18 @@
     .fbox.opsional{border-left:3px solid var(--border)}
     /* Kotak yang seluruh acuannya terkunci — merah, sekali lihat langsung jelas */
     .fbox.terkunciBox{outline:none;border:2px solid var(--error);background:#FEF2F2}
+    /* ── KARTU BORONGAN (WO Saya) ────────────────────────────────────────────
+       Satu borongan bisa berisi 5–10 WO. Tanpa sekat tegas, mekanik kehilangan
+       jejak baris mana yang sedang dia kerjakan — timer, tombol, dan nomor WO
+       tiap baris jadi terlihat menyatu. Tiap baris diberi kotak sendiri. */
+    .grupHead{background:var(--primary-soft);border:1px solid var(--border);
+              border-left:4px solid #0f766e;border-radius:var(--radius-sm);padding:11px 12px;margin-bottom:10px}
+    .woLine{background:var(--bg-secondary);border:1px solid var(--border);
+            border-radius:var(--radius-sm);padding:12px;margin-bottom:10px}
+    .woLine:last-of-type{margin-bottom:12px}
+    .woLineNo{display:inline-flex;align-items:center;justify-content:center;
+              min-width:22px;height:22px;border-radius:6px;background:#0f766e;color:#fff;
+              font-size:11px;font-weight:800;margin-right:7px;flex-shrink:0}
     .obinfo{font-size:12px;color:#B45309;font-weight:700;margin-bottom:6px}
     .modal{display:none;position:fixed;inset:0;background:rgba(17,24,39,.55);z-index:50;align-items:flex-end;justify-content:center}
     .sheet{background:var(--card);width:100%;max-width:560px;border-radius:var(--radius) var(--radius) 0 0;padding:20px 16px 24px;max-height:92vh;overflow-y:auto}
