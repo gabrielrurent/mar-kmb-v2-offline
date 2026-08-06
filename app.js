@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v70';
+var APP_VERSION = 'v71';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -565,6 +565,7 @@ function syncNow(manual) {
         // cara membetulkannya dari layar. Sync otomatis tidak ikut, supaya
         // panggilan latar tidak bertambah tanpa perlu.
         if (manual && S.approved.length) tasks.push(pullApproved());
+        if (manual && (S.rejected||[]).length) tasks.push(pullRejected());
         if (perluRefs) tasks.push(pullRefs());
       }
       return Promise.all(tasks);
@@ -690,6 +691,13 @@ function pullActive() {
     if (!r.success) return;
     S.active = (r.result && r.result.active) || [];
     return kvSet('active', S.active);
+  });
+}
+function pullRejected() {
+  return api('pull_rejected').then(function(r) {
+    if (!r.success) return;
+    S.rejected = r.result.rejected || [];
+    return kvSet('rejected', S.rejected);
   });
 }
 function pullApproved() {
@@ -2193,9 +2201,23 @@ var BAGIAN_WO = [
    sub:'sudah dikirim, di meja approver', st:['pending_supervisor','pending_superintendent']},
   {id:'approved', judul:'Disetujui',         ikon:'✅', warna:'#15803d',
    sub:'poin sudah masuk', st:['approved']},
-  {id:'ditolak',  judul:'Ditolak',           ikon:'❌', warna:'#b91c1c',
-   sub:'perlu Anda periksa', st:['rejected']}
+  // 'cancelled' WAJIB ikut di sini. Dulu ia tak masuk kategori mana pun, jadi
+  // WO yang dibatalkan LENYAP dari menu mekanik tanpa jejak — mekanik kehilangan
+  // riwayatnya justru saat ia paling perlu tahu kenapa kerjanya tidak dibayar.
+  {id:'ditolak',  judul:'Ditolak / Dibatalkan', ikon:'❌', warna:'#b91c1c',
+   sub:'perlu Anda periksa', st:['rejected','cancelled']},
+  // Penampung status yang belum terdaftar — lihat isiBagian(). Hanya tampil
+  // bila memang ada isinya, jadi normalnya tak terlihat sama sekali.
+  {id:'lain',     judul:'Status Lain',       ikon:'❔', warna:'#6b7280',
+   sub:'status di luar daftar — laporkan bila muncul', st:[]}
 ];
+
+/** Semua status yang sudah punya kategori — dasar jaring pengaman di bawah. */
+function _statusTerdaftar() {
+  var out = [];
+  BAGIAN_WO.forEach(function(b){ b.st.forEach(function(s){ out.push(s); }); });
+  return out;
+}
 
 function bukaBagianWo(id) { S.woView = id; renderAll(); window.scrollTo(0, 0); }
 function kembaliMenuWo()  { S.woView = null; renderAll(); window.scrollTo(0, 0); }
@@ -2215,6 +2237,14 @@ function renderWos(el) {
     if (String(w.status) !== 'pending_mechanic_work') kirimGrup[g] = (kirimGrup[g]||0) + 1;
   });
   function isiBagian(B) {
+    // Jaring pengaman: kategori 'lain' menampung status yang belum terdaftar.
+    // Tanpa ini, status baru (atau yang terlewat seperti 'cancelled' dulu)
+    // menghilang dari layar TANPA JEJAK — mekanik cuma melihat jumlahnya tak
+    // pernah cocok, dan tak ada cara menemukan WO-nya lagi.
+    if (B.id === 'lain') {
+      var dikenal = _statusTerdaftar();
+      return S.wos.filter(function(w){ return dikenal.indexOf(String(w.status)) === -1; });
+    }
     return S.wos.filter(function(w){ return B.st.indexOf(String(w.status)) !== -1; });
   }
 
@@ -2239,9 +2269,9 @@ function renderWos(el) {
   var out = '';
   BAGIAN_WO.forEach(function(B) {
     var n = isiBagian(B).length;
-    // Transfer jarang dipakai — hanya tampil bila memang ada isinya, supaya
-    // menu tidak penuh kategori kosong.
-    if (!n && B.id === 'transfer') return;
+    // Transfer jarang dipakai, dan "Status Lain" normalnya kosong — keduanya
+    // hanya tampil bila memang ada isinya, supaya menu tidak penuh kategori nol.
+    if (!n && (B.id === 'transfer' || B.id === 'lain')) return;
     out += '<button class="menuBox" style="border-left-color:'+B.warna+'" onclick="bukaBagianWo(\''+B.id+'\')">'+
              '<span class="menuIkon">'+B.ikon+'</span>'+
              '<span class="menuTeks"><span class="menuJudul">'+esc(B.judul)+'</span>'+
@@ -2420,14 +2450,46 @@ function fmtJamMenit(h){
 }
 function renderApprovalTab(el) {
   var subs = [['pending','✅ Pending',S.pending.length],['active','⏳ Aktif',S.active.length],
-              ['transfer','🔁 Transfer',S.transfers.length],['approved','🏆 Approved',S.approved.length]];
-  var bar = '<div class="tabBar" style="display:flex;margin-bottom:12px">'+subs.map(function(s){
+              ['transfer','🔁 Transfer',S.transfers.length],['approved','🏆 Approved',S.approved.length],
+              // Riwayat ditolak/dibatalkan: dulu tak punya layar sama sekali —
+              // begitu WO ditolak, ia lenyap dan hanya bisa dilacak lewat
+              // spreadsheet. Padahal justru itu yang ditengok saat ada
+              // pertanyaan "kenapa WO saya tidak dibayar".
+              ['rejected','❌ Ditolak',(S.rejected||[]).length]];
+  var bar = '<div class="tabBar" style="display:flex;margin-bottom:12px;flex-wrap:wrap">'+subs.map(function(s){
     return '<button class="tab'+(S.appSub===s[0]?' active':'')+'" onclick="switchAppSub(\''+s[0]+'\')">'+s[1]+' ('+s[2]+')</button>';
   }).join('')+'</div>';
   var body = S.appSub==='active' ? renderActiveList()
            : S.appSub==='transfer' ? renderTransferList()
-           : (S.appSub==='approved' ? renderApprovedList() : renderPendingList());
+           : S.appSub==='approved' ? renderApprovedList()
+           : S.appSub==='rejected' ? renderRejectedList()
+           : renderPendingList();
   el.innerHTML = bar + body;
+}
+
+/** Riwayat WO ditolak / dibatalkan — TANPA angka poin (sudah nol, dan
+    menampilkannya hanya memancing salah paham "kok dapat poin?"). */
+function renderRejectedList(){
+  var l = S.rejected || [];
+  if (!l.length) return '<div class="empty">Belum ada WO ditolak/dibatalkan.<br>Tekan 🔄 Refresh saat online.</div>';
+  var html='<div class="sub">'+l.length+' WO ditolak/dibatalkan (maks 100 terbaru)</div>';
+  l.forEach(function(wo){
+    var batal = String(wo.status) === 'cancelled';
+    html+='<div class="card"><div class="cardTop"><b>'+esc(wo.wo_number)+'</b>'+
+      '<span class="badge" style="background:'+(batal?'#6b7280':'#b91c1c')+'">'+(batal?'🗑 Dibatalkan':'❌ Ditolak')+'</span>'+
+      (wo.section?'<span class="badge" style="background:#334155">'+esc(wo.section)+'</span>':'')+
+      (wo.is_others?'<span class="badge" style="background:'+WARNA.others+'">Others</span>':'')+'</div>'+
+      '<div class="cardBody"><b>'+esc(wo.component_name||'-')+'</b>'+
+      '<div class="woInfo">'+
+        '<span class="k">Unit</span><span class="v">'+esc(wo.unit_name||'-')+'</span>'+
+        '<span class="k">Lokasi</span><span class="v">'+esc(locLabel(wo.location))+'</span>'+
+        ((wo.created_by_name||wo.created_by)?'<span class="k">Pembuat</span><span class="v">'+esc(wo.created_by_name||wo.created_by)+'</span>':'')+
+        '<span class="k">Tim</span><span class="v">'+(wo.team_names||[]).map(function(n){return esc(n);}).join(', ')+'</span>'+
+      '</div></div>'+
+      (wo.keterangan?'<div class="ket">📝 '+esc(wo.keterangan)+'</div>':'')+
+      '</div>';
+  });
+  return html;
 }
 function switchAppSub(sub){
   S.appSub = sub;
@@ -2438,6 +2500,10 @@ function switchAppSub(sub){
   if (sub==='approved' && navigator.onLine) {
     if (!S.approved.length) toast('⏳ Memuat approved...');
     pullApproved().then(renderAll).catch(function(){});
+  }
+  if (sub==='rejected' && navigator.onLine) {
+    if (!(S.rejected||[]).length) toast('⏳ Memuat riwayat ditolak...');
+    pullRejected().then(renderAll).catch(function(){});
   }
   renderAll();
 }
@@ -2689,9 +2755,9 @@ function renderApprovedList(){
 window.addEventListener('online',function(){renderAll(); syncNow(false);});
 window.addEventListener('offline',renderAll);
 openDb().then(function() {
-  return Promise.all([kvGet('token'),kvGet('me'),kvGet('wos'),kvGet('refs'),kvGet('pending'),kvGet('last_sync'),kvGet('role'),kvGet('refs_at'),kvGet('active'),kvGet('approved'),kvGet('transfers'),kvGet('timer_states'),kvGet('monitoring'),kvGet('monitoring_overall')]);
+  return Promise.all([kvGet('token'),kvGet('me'),kvGet('wos'),kvGet('refs'),kvGet('pending'),kvGet('last_sync'),kvGet('role'),kvGet('refs_at'),kvGet('active'),kvGet('approved'),kvGet('transfers'),kvGet('timer_states'),kvGet('monitoring'),kvGet('monitoring_overall'),kvGet('rejected')]);
 }).then(function(v) {
-  S.token=v[0]||null; S.me=v[1]||null; S.wos=v[2]||[]; S.refs=v[3]||null; S.pending=v[4]||[]; S.lastSync=v[5]||null; S.role=v[6]||'mechanic'; S.refsAt=v[7]||null; S.active=v[8]||[]; S.approved=v[9]||[]; S.transfers=v[10]||[]; S.timerStates=v[11]||{}; S.monitoring=v[12]||[]; S.monitoringOverall=v[13]||{};
+  S.token=v[0]||null; S.me=v[1]||null; S.wos=v[2]||[]; S.refs=v[3]||null; S.pending=v[4]||[]; S.lastSync=v[5]||null; S.role=v[6]||'mechanic'; S.refsAt=v[7]||null; S.active=v[8]||[]; S.approved=v[9]||[]; S.transfers=v[10]||[]; S.timerStates=v[11]||{}; S.monitoring=v[12]||[]; S.monitoringOverall=v[13]||{}; S.rejected=v[14]||[];
   return refreshOutbox();
 }).then(function() {
   if ('serviceWorker' in navigator) {
