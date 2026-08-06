@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v71';
+var APP_VERSION = 'v72';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -1367,7 +1367,10 @@ function tambahBarisGrup() {
       sub:  document.getElementById('cCasSub') ? document.getElementById('cCasSub').value : ''
     };
   }
-  _grupBaris.push({payload: d.payload, label: d.label});
+  // Jumlah mekanik DIREKAM per baris, bukan dibaca ulang dari form saat render:
+  // tim boleh berbeda antar baris (regu satu job bisa tak sama dengan job lain),
+  // jadi angka yang benar adalah yang tersimpan bersama barisnya.
+  _grupBaris.push({payload: d.payload, label: d.label, orang: (d.payload.team || []).length});
   renderGrupBaris();
   // Kosongkan HANYA yang berulang; yang dikunci (unit/job) sengaja dipertahankan
   // supaya mekanik tak perlu memilihnya ulang tiap baris.
@@ -1469,11 +1472,28 @@ function renderGrupBaris() {
   document.getElementById('cGrupCount').textContent = _grupBaris.length;
   document.getElementById('cGrupCount2').textContent = _grupBaris.length;
   var html = _grupBaris.length ? '' : '<div class="sub" style="margin:0">Belum ada baris. Pilih lalu tekan “Tambahkan ke daftar”.</div>';
+  var totalOrang = 0, samaSemua = true, acuan = null;
   _grupBaris.forEach(function(b, i) {
+    var orang = (typeof b.orang === 'number') ? b.orang
+              : ((b.payload && b.payload.team) ? b.payload.team.length : 0);
+    totalOrang += orang;
+    if (acuan === null) acuan = orang; else if (acuan !== orang) samaSemua = false;
     html += '<div style="display:flex;gap:6px;align-items:center;margin-bottom:5px">' +
-      '<span style="flex:1;font-size:13px;color:var(--text)">' + (i+1) + '. ' + esc(b.label) + '</span>' +
+      '<span style="flex:1;min-width:0;font-size:13px;color:var(--text)">' + (i+1) + '. ' + esc(b.label) +
+        '<span class="sub" style="display:block;margin:1px 0 0">👷 ' + orang + ' mekanik</span></span>' +
       '<button type="button" class="mini gray" onclick="hapusBarisGrup(' + i + ')">✕</button></div>';
   });
+  // Ringkasan tenaga kerja seluruh borongan — dijumlah dari tiap baris, BUKAN
+  // dari pilihan form saat ini, karena tim boleh berbeda antar baris.
+  var rk = document.getElementById('cGrupRingkas');
+  if (rk) {
+    rk.style.display = _grupBaris.length ? 'block' : 'none';
+    rk.innerHTML = _grupBaris.length
+      ? ('👷 Manpower: ' + (samaSemua ? ('<b>' + acuan + ' mekanik</b> di tiap baris')
+                                      : '<b>berbeda-beda</b> antar baris') +
+         ' · total <b>' + totalOrang + ' penugasan</b>')
+      : '';
+  }
   document.getElementById('cGrupList').innerHTML = html;
   _kunciAcuanGrup();
 }
