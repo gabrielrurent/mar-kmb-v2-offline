@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v68';
+var APP_VERSION = 'v69';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -1597,6 +1597,13 @@ function queueCancel(){
   var reason = document.getElementById('cxReason').value.trim();
   if (!reason) { toast('Isi alasan pembatalan'); return; }
   var woNum = document.getElementById('cxDesc').textContent;
+  // Konfirmasi ULANG — membatalkan WO tak bisa dibalik lewat aplikasi, dan
+  // untuk WO yang sudah approved poinnya ikut dinolkan. Mengisi alasan saja
+  // bukan tanda persetujuan; orang mengetik lalu menekan tombol berikutnya
+  // tanpa membaca. Sebut nomor WO-nya supaya tak salah kartu.
+  if (!confirm('Batalkan ' + woNum + '?\n\nAlasan: ' + reason +
+               '\n\nWO yang dibatalkan TIDAK bisa dikembalikan lewat aplikasi.\n' +
+               'Bila WO ini sudah disetujui, poinnya ikut dinolkan.\n\nLanjutkan?')) return;
   var op = { op_id:uuid(), seq:(_enqSeq++), action:'cancel_wo', wo_id:cancelWoId, wo_number:woNum,
     payload:{ wo_id:cancelWoId, reason:reason }, status:'queued', created_at:new Date().toISOString(), label:'Batal '+woNum };
   obPut(op).then(refreshOutbox).then(function(){
@@ -2623,10 +2630,16 @@ function renderActiveList(){
     var othersBadge = wo.is_others ? '<span class="badge" style="background:'+WARNA.others+'">Others</span>' : '';
     html+='<div class="card"><div class="cardTop"><b>'+esc(wo.wo_number)+'</b><span class="badge" style="background:#1d4ed8">📝 Belum diisi</span>'+
       (wo.section?'<span class="badge" style="background:#334155">'+esc(wo.section)+'</span>':'')+othersBadge+'</div>'+
-      '<div class="cardBody"><b>'+esc(wo.component_name||'-')+'</b><br>'+
-      '📍 Lokasi: '+esc(locLabel(wo.location))+'<br>'+
-      'Kondisi: '+esc(wcLabel(wo.work_condition))+((wo.created_by_name||wo.created_by)?' · Pembuat: '+esc(wo.created_by_name||wo.created_by):'')+'<br>'+
-      '👥 Tim: '+(wo.team_names||[]).map(function(n){return esc(n);}).join(', ')+'</div>'+
+      // Label–nilai sejajar, sama seperti kartu approval. Unit WAJIB ada:
+      // tanpa itu approver tahu pekerjaannya apa tapi tidak tahu di alat mana.
+      '<div class="cardBody"><b>'+esc(wo.component_name||'-')+'</b>'+
+      '<div class="woInfo">'+
+        '<span class="k">Unit</span><span class="v">'+esc(wo.unit_name||'-')+'</span>'+
+        '<span class="k">Lokasi</span><span class="v">'+esc(locLabel(wo.location))+'</span>'+
+        '<span class="k">Kondisi</span><span class="v">'+esc(wcLabel(wo.work_condition))+'</span>'+
+        ((wo.created_by_name||wo.created_by)?'<span class="k">Pembuat</span><span class="v">'+esc(wo.created_by_name||wo.created_by)+'</span>':'')+
+        '<span class="k">Tim</span><span class="v">'+(wo.team_names||[]).map(function(n){return esc(n);}).join(', ')+'</span>'+
+      '</div></div>'+
       (wo.keterangan?'<div class="ket">📝 '+esc(wo.keterangan)+'</div>':'')+
       (function(){ var q=queuedOpFor(wo.id); return q ? queuedNote(q) : cancelBtn(wo); })()+'</div>';
   });
