@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v69';
+var APP_VERSION = 'v70';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -558,7 +558,15 @@ function syncNow(manual) {
       var perluRefs = manual || refsStale();
       var tasks = [];
       if (S.role === 'mechanic') { tasks.push(pullWos()); if (perluRefs) tasks.push(pullRefs()); }
-      else { tasks.push(pullPending()); tasks.push(pullActive()); tasks.push(pullTransfers()); tasks.push(pullMonitoring()); if (perluRefs) tasks.push(pullRefs()); }
+      else {
+        tasks.push(pullPending()); tasks.push(pullActive()); tasks.push(pullTransfers()); tasks.push(pullMonitoring());
+        // Daftar approved ikut disegarkan saat Refresh DITEKAN — kalau tidak,
+        // WO yang dibatalkan di tempat lain tetap tampil "approved" dan tak ada
+        // cara membetulkannya dari layar. Sync otomatis tidak ikut, supaya
+        // panggilan latar tidak bertambah tanpa perlu.
+        if (manual && S.approved.length) tasks.push(pullApproved());
+        if (perluRefs) tasks.push(pullRefs());
+      }
       return Promise.all(tasks);
     })
     .then(function() { S.lastSync = new Date().toISOString(); subscribePush(); return kvSet('last_sync',S.lastSync); })
@@ -2313,7 +2321,12 @@ function _kartuWo(daftar, opByWo, totalGrup, kirimGrup) {
         (canFill?'<div style="display:flex;gap:6px;margin-top:10px">'+
           '<button class="big secondary" style="flex:1;margin-top:0" onclick="openSubmitWithTimer(\''+esc(String(wo.id))+'\')">✍️ Isi Manual</button>'+
           '<button class="big" style="flex:1;margin-top:0" onclick="kirimLangsung(\''+esc(String(wo.id))+'\')">📮 Kirim</button>'+
-        '</div>':'');
+        '</div>':'')+
+        // Hapus WO — hanya muncul bila SERVER menyatakan boleh (WO buatannya
+        // sendiri & belum dikerjakan). Bergaya garis luar merah: merusak, jadi
+        // tak boleh terlihat semenarik Kirim.
+        (wo.boleh_batal ? '<button class="big secondary" style="margin-top:6px;color:var(--error);border-color:#FCA5A5" '+
+          'onclick="openCancelForm(\''+esc(String(wo.id))+'\',\''+esc(String(wo.wo_number))+'\')">🗑 Hapus WO ini</button>' : '');
       html += banyak ? '</div>' : '';
     });
 
@@ -2418,7 +2431,14 @@ function renderApprovalTab(el) {
 }
 function switchAppSub(sub){
   S.appSub = sub;
-  if (sub==='approved' && !S.approved.length && navigator.onLine) { toast('⏳ Memuat approved...'); pullApproved().then(renderAll).catch(function(){}); }
+  // Tarik ulang SETIAP kali tab dibuka, bukan hanya saat daftarnya kosong.
+  // Dulu `!S.approved.length` membuat daftar approved dimuat sekali lalu tak
+  // pernah disegarkan lagi — WO yang sudah dibatalkan di tempat lain tetap
+  // tampil "approved" sampai aplikasi dimuat ulang.
+  if (sub==='approved' && navigator.onLine) {
+    if (!S.approved.length) toast('⏳ Memuat approved...');
+    pullApproved().then(renderAll).catch(function(){});
+  }
   renderAll();
 }
 function fmtIdr(n){ n=parseFloat(n)||0; return n.toLocaleString('id-ID'); }
