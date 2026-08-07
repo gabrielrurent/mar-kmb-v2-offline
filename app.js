@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v73';
+var APP_VERSION = 'v74';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -252,8 +252,7 @@ function resetLiveTimer(woId) {
   saveTimerState(woId, { state:'idle', start_epoch:0, elapsed_ms:0 });
   // Form isian bisa sedang terbuka untuk WO ini — kosongkan jamnya juga.
   if (activeWo && String(activeWo.id) === String(woId)) {
-    var fs = document.getElementById('fStart'), fe = document.getElementById('fEnd');
-    if (fs) fs.value = ''; if (fe) fe.value = '';
+    dtSet('fStart', ''); dtSet('fEnd', '');
     showTimerSummary(0);
     updateModalTimerUI();
   }
@@ -282,6 +281,83 @@ function formatToDatetimeLocal(date) {
   var pad = function(n){ return (n<10?'0':'')+n; };
   return date.getFullYear()+'-'+pad(date.getMonth()+1)+'-'+pad(date.getDate())+
     'T'+pad(date.getHours())+':'+pad(date.getMinutes());
+}
+
+/* ═══ PICKER TANGGAL & JAM 24 JAM ═══════════════════════════════════════════
+ * KEMBAR dengan DateTime24.html di project GAS — kalau salah satu diubah, ubah
+ * keduanya, kalau tidak picker web dan PWA berbeda bentuk.
+ *
+ * KENAPA tidak <input type="datetime-local">: format 12/24 jam pada picker
+ * bawaan ditentukan LOCALE PERANGKAT, bukan HTML. Di ponsel ber-locale Inggris
+ * ia memunculkan AM/PM — bentuk yang tidak dipakai di lapangan sini, dan sumber
+ * salah isi yang mahal (jam 13.00 terbaca "1" lalu tersimpan 01.00 → meleset 12
+ * jam pada actual_hours, dan itu jalur uang). Tidak ada atribut untuk
+ * memaksanya, jadi jamnya dibuat sendiri: 00–23 dan 00–59.
+ * Bagian TANGGAL tetap <input type="date"> — di sana tak ada urusan AM/PM.
+ *
+ * Nilainya tetap ditulis ke <input type="hidden"> ber-ID SAMA seperti dulu,
+ * format "YYYY-MM-DDTHH:MM". Semua kode yang MEMBACA `.value` tak berubah.
+ * Yang MENULIS wajib lewat dtSet(id, nilai).
+ */
+function dtHtml(id) {
+  return '<input type="hidden" id="'+id+'">'+
+    '<div class="dt24" data-dt="'+id+'">'+
+      '<input type="date" class="inp dtTgl" aria-label="Tanggal">'+
+      '<select class="inp dtJam" aria-label="Jam"></select>'+
+      '<span class="dtTitik">:</span>'+
+      '<select class="inp dtMnt" aria-label="Menit"></select>'+
+    '</div>';
+}
+function _dt2(n){ return (n<10?'0':'')+n; }
+
+/** Isi opsi jam/menit & pasang pendengar. Aman dipanggil berulang. */
+function dtPasang(root) {
+  var grup = (root||document).querySelectorAll('.dt24');
+  for (var i=0;i<grup.length;i++) {
+    var g = grup[i];
+    if (g.getAttribute('data-siap')==='1') continue;
+    g.setAttribute('data-siap','1');
+    var oJam='<option value="">--</option>';
+    for (var h=0;h<24;h++) oJam+='<option value="'+_dt2(h)+'">'+_dt2(h)+'</option>';
+    g.querySelector('.dtJam').innerHTML=oJam;
+    var oMnt='<option value="">--</option>';
+    for (var m=0;m<60;m++) oMnt+='<option value="'+_dt2(m)+'">'+_dt2(m)+'</option>';
+    g.querySelector('.dtMnt').innerHTML=oMnt;
+    // 'change' untuk select; 'input' untuk <input type="date"> — sebagian
+    // peramban Android baru mengirim 'change' setelah picker ditutup.
+    g.addEventListener('change', function(){ dtKumpulkan(this); });
+    g.addEventListener('input',  function(){ dtKumpulkan(this); });
+  }
+}
+
+/**
+ * Trio di layar → input hidden, lalu picu 'change' PADA input hidden supaya
+ * handler lama (hitung durasi, penjaga override) tetap jalan seperti dulu.
+ */
+function dtKumpulkan(g) {
+  var el = document.getElementById(g.getAttribute('data-dt'));
+  if (!el) return;
+  var t=g.querySelector('.dtTgl').value, j=g.querySelector('.dtJam').value, m=g.querySelector('.dtMnt').value;
+  // Belum lengkap = kosong. Separuh terisi tidak boleh jadi waktu tebakan —
+  // lebih baik ditolak validasi daripada tersimpan jam ngawur.
+  var baru = (t && j!=='' && m!=='') ? (t+'T'+j+':'+m) : '';
+  if (el.value === baru) return;
+  el.value = baru;
+  el.dispatchEvent(new Event('change', {bubbles:true}));
+}
+
+/** Satu-satunya cara sah menulis nilai picker. `s` = "YYYY-MM-DDTHH:MM" atau ''. */
+function dtSet(id, s) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  s = s ? String(s) : '';
+  if (s.length > 16) s = s.substring(0,16);   // buang detik bila terbawa
+  el.value = s;
+  var g = document.querySelector('.dt24[data-dt="'+id+'"]');
+  if (!g) return;
+  g.querySelector('.dtTgl').value = s ? s.substring(0,10) : '';
+  g.querySelector('.dtJam').value = s ? s.substring(11,13) : '';
+  g.querySelector('.dtMnt').value = s ? s.substring(14,16) : '';
 }
 function showTimerSummary(totalMs, startD, endD) {
   var box = document.getElementById('fTimerSummary');
@@ -357,8 +433,8 @@ function modalTimerStop() {
   var totalMs = stopLiveTimer(activeWo.id);
   if (totalMs > 0) {
     var now = new Date(), start = new Date(now.getTime()-totalMs);
-    document.getElementById('fStart').value = formatToDatetimeLocal(start);
-    document.getElementById('fEnd').value   = formatToDatetimeLocal(now);
+    dtSet('fStart', formatToDatetimeLocal(start));
+    dtSet('fEnd', formatToDatetimeLocal(now));
     showTimerSummary(totalMs, start, now);
   }
   updateModalTimerUI();
@@ -389,8 +465,8 @@ function openSubmitWithTimer(woId) {
   openSubmitForm(woId);
   if (totalMs > 0) {
     var now = new Date(), start = new Date(now.getTime()-totalMs);
-    document.getElementById('fStart').value = formatToDatetimeLocal(start);
-    document.getElementById('fEnd').value   = formatToDatetimeLocal(now);
+    dtSet('fStart', formatToDatetimeLocal(start));
+    dtSet('fEnd', formatToDatetimeLocal(now));
     showTimerSummary(totalMs, start, now);
   }
 }
@@ -776,7 +852,7 @@ function openSubmitForm(woId) {
     (activeWo.target_hours?' · Target: '+fmtJamMenit(activeWo.target_hours):'');
   document.getElementById('fKet').textContent = activeWo.keterangan ? '📝 '+activeWo.keterangan : '';
   document.getElementById('fKet').style.display = activeWo.keterangan ? 'block' : 'none';
-  document.getElementById('fStart').value=''; document.getElementById('fEnd').value='';
+  dtSet('fStart',''); dtSet('fEnd','');
   document.getElementById('fHm').value=''; document.getElementById('fKm').value='';
   document.getElementById('fPart').value='';
   // Tyreman: sembunyikan pilihan spare part (nilainya sudah dikosongkan di atas)
@@ -1693,8 +1769,8 @@ function openApproveForm(woId) {
   var _th = parseFloat(a.target_hours) || 0;
   document.getElementById('aOvTgtJam').value = _th ? Math.floor(_th) : '';
   document.getElementById('aOvTgtMenit').value = _th ? Math.round((_th - Math.floor(_th)) * 60) : '';
-  document.getElementById('aOvStart').value = toDtLocal(a.start_time);
-  document.getElementById('aOvEnd').value = toDtLocal(a.end_time);
+  dtSet('aOvStart', toDtLocal(a.start_time));
+  dtSet('aOvEnd', toDtLocal(a.end_time));
   // Nilai SISTEM ditulis terang di tiap kotak override — tanpa itu approver
   // tak tahu angka apa yang sedang dia timpa, dan itu jalur uang.
   var _actNow = document.getElementById('aOvActualNow');
@@ -1773,7 +1849,7 @@ function toggleOverride() {
   if (a) a.textContent = open ? '▸' : '▾';
 }
 
-/** ISO → nilai <input type="datetime-local"> (waktu lokal). */
+/** ISO → "YYYY-MM-DDTHH:MM" waktu lokal (dipakai dtSet). */
 function toDtLocal(v) {
   if (!v) return '';
   var d = new Date(v);
@@ -2783,6 +2859,25 @@ function renderApprovedList(){
 /* ── Init ── */
 window.addEventListener('online',function(){renderAll(); syncNow(false);});
 window.addEventListener('offline',renderAll);
+/* Picker 24 jam dibangun SINKRON, sebelum apa pun memanggil dtSet. app.js
+ * dimuat di akhir <body>, jadi slot-slotnya sudah ada di DOM saat baris ini
+ * jalan — tidak boleh menunggu openDb() yang asinkron. */
+(function() {
+  var slot = {slotFStart:'fStart', slotFEnd:'fEnd', slotAOvStart:'aOvStart', slotAOvEnd:'aOvEnd'};
+  for (var k in slot) {
+    var el = document.getElementById(k);
+    if (el) el.innerHTML = dtHtml(slot[k]);
+  }
+  dtPasang();
+  // Dulu kedua handler ini inline di atribut onchange input override. Sekarang
+  // dipasang pada input HIDDEN — di situlah dtKumpulkan() memicu 'change'
+  // setelah tanggal/jam/menit di layar berubah.
+  ['aOvStart','aOvEnd'].forEach(function(id) {
+    var h = document.getElementById(id);
+    if (h) h.addEventListener('change', function(){ aOvHitungDurasi(); perbaruiPenjagaOverride(); });
+  });
+})();
+
 openDb().then(function() {
   return Promise.all([kvGet('token'),kvGet('me'),kvGet('wos'),kvGet('refs'),kvGet('pending'),kvGet('last_sync'),kvGet('role'),kvGet('refs_at'),kvGet('active'),kvGet('approved'),kvGet('transfers'),kvGet('timer_states'),kvGet('monitoring'),kvGet('monitoring_overall'),kvGet('rejected')]);
 }).then(function(v) {

@@ -54,12 +54,23 @@
     label{font-size:12px;color:var(--text-secondary);font-weight:600}
     /* minmax(0,1fr) + min-width:0 WAJIB, bukan `1fr 1fr`. `1fr` = minmax(auto,1fr),
        dan `auto` melarang track menyusut di bawah lebar min-content isinya.
-       Input datetime-local punya min-content besar (~200px), jadi dua kolomnya
+       Isi kolom waktu lebar (tanggal + jam + menit), jadi dua kolom `1fr`
        memaksa grid lebih lebar dari layar HP — kolom "Selesai" tertimpa lalu
        meleset keluar layar. Persoalan yang sama sudah diperbaiki di PWA SUM. */
     .row2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
     .row2>*{min-width:0}
     @media (max-width:520px){.row2{grid-template-columns:1fr}}
+
+    /* ── Picker tanggal & jam 24 jam (lihat dtHtml di app.js) ──────────────
+       Jam dibuat sendiri karena picker bawaan mengikuti LOCALE PERANGKAT dan
+       memunculkan AM/PM di ponsel ber-locale Inggris — bentuk yang tak dipakai
+       di lapangan sini dan sumber salah isi yang mahal (jalur uang). */
+    .dt24{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;gap:5px;align-items:center}
+    .dt24 .dtTgl{min-width:0}
+    .dt24 .dtJam,.dt24 .dtMnt{min-width:0;width:auto;padding-left:7px;padding-right:3px;
+      font-variant-numeric:tabular-nums;text-align:center}
+    .dt24 .dtTitik{font-weight:700;opacity:.55}
+    @media (max-width:380px){.dt24{gap:3px}}
     .secPicker{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 12px}
     .secOpt input[type="radio"]{display:none}
     .secCard{display:inline-block;padding:8px 14px;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-weight:700;font-size:13px;color:var(--text-secondary);background:var(--card)}
@@ -293,8 +304,8 @@
       </div>
 
       <div class="row2">
-        <div><label>Jam Mulai *</label><input type="datetime-local" class="inp" id="fStart"></div>
-        <div><label>Jam Selesai *</label><input type="datetime-local" class="inp" id="fEnd"></div>
+        <div><label>Jam Mulai *</label><div id="slotFStart"></div></div>
+        <div><label>Jam Selesai *</label><div id="slotFEnd"></div></div>
       </div>
       <!-- HM & KM disembunyikan di semua section (1 Agu 2026), opsional di server -->
       <div class="row2" id="hmKmWrap" style="display:none">
@@ -479,8 +490,8 @@
             <label>Waktu kerja (koreksi jam mekanik)</label>
             <div class="ovSis">Tercatat sekarang: <b id="aOvActualNow">-</b></div>
             <div class="row2">
-              <div><span class="fboxHead" style="margin:0 0 4px">Mulai</span><input type="datetime-local" class="inp" id="aOvStart" onchange="aOvHitungDurasi();perbaruiPenjagaOverride()"></div>
-              <div><span class="fboxHead" style="margin:0 0 4px">Selesai</span><input type="datetime-local" class="inp" id="aOvEnd" onchange="aOvHitungDurasi();perbaruiPenjagaOverride()"></div>
+              <div><span class="fboxHead" style="margin:0 0 4px">Mulai</span><div id="slotAOvStart"></div></div>
+              <div><span class="fboxHead" style="margin:0 0 4px">Selesai</span><div id="slotAOvEnd"></div></div>
             </div>
             <div id="aOvDurBox" style="background:#FFFBEB;border:1px solid #FDE68A;color:#92400E;border-radius:8px;padding:8px 10px;font-size:13px;font-weight:700">Durasi baru: <span id="aOvDurText">-</span></div>
             <div class="sub" id="aOvPartialHint" style="display:none;color:#B45309;margin:7px 0 0"></div>
