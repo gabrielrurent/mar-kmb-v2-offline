@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v72';
+var APP_VERSION = 'v73';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -1145,7 +1145,11 @@ function populateCascadeRoot(sec) {
     var validModels = {};
     for (var j=0;j<jobs.length;j++) validModels[_nm(jobs[j].unit_model)] = true;
     // Hanya unit yang modelnya punya job di katalog — saringan lama, tetap.
+    // KECUALI unit ber-scope 'others': itu bukan unit sungguhan dan memang tak
+    // punya model, jadi saringan ini membuangnya. Akibatnya jalan pintas ke job
+    // manual tak pernah terjangkau dari field — section terbesar kita.
     var layak = (S.refs.units||[]).filter(function(u) {
+      if (_scopeArr(u).indexOf('others') !== -1) return true;
       var um = _nm(u.unit_model);
       return um && validModels[um];
     });
@@ -1708,6 +1712,11 @@ function openApproveForm(woId) {
     var _now = String(a.unit_id || '');
     var _h = '<option value="">— tidak diubah —</option>';
     _units.forEach(function(u) {
+      // Unit ber-scope 'others' BUKAN unit — ia cuma jalan pintas ke job manual
+      // di form pembuatan. Menyetelnya lewat override berarti menulis unit_id
+      // palsu ke jalur uang (unit_id → unit_factor → poin). Tidak disaring oleh
+      // aturan section/model — memang tidak boleh ada di daftar ini sama sekali.
+      if (_scopeArr(u).indexOf('others') !== -1) return;
       _h += '<option value="'+esc(u.unit_id)+'"'+(String(u.unit_id)===_now?' selected':'')+'>'+
             esc(u.unit_name)+' ('+esc(u.unit_type)+')</option>';
     });
