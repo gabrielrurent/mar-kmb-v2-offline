@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v74';
+var APP_VERSION = 'v75';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -252,7 +252,7 @@ function resetLiveTimer(woId) {
   saveTimerState(woId, { state:'idle', start_epoch:0, elapsed_ms:0 });
   // Form isian bisa sedang terbuka untuk WO ini — kosongkan jamnya juga.
   if (activeWo && String(activeWo.id) === String(woId)) {
-    dtSet('fStart', ''); dtSet('fEnd', '');
+    dtSet('fStart', ''); dtSet('fEnd', ''); fHitungDurasi();
     showTimerSummary(0);
     updateModalTimerUI();
   }
@@ -346,6 +346,35 @@ function dtKumpulkan(g) {
   el.dispatchEvent(new Event('change', {bubbles:true}));
 }
 
+/**
+ * Bacaan balik durasi dari picker "Isi Manual".
+ *
+ * Web sudah punya sejak dulu (durationPreview); PWA belum. Dengan jam & menit
+ * kini di dua kolom terpisah, menjumlahkannya di kepala makin sulit — apalagi
+ * kalau melewati tengah malam — dan kekeliruannya baru ketahuan setelah
+ * terkirim. Ini jalur uang (actual_hours), jadi angka desimalnya ikut
+ * ditampilkan supaya cocok dengan yang dilihat approver.
+ */
+function fHitungDurasi() {
+  var box = document.getElementById('fDurBox');
+  if (!box) return;
+  var sEl = document.getElementById('fStart'), eEl = document.getElementById('fEnd');
+  var s = sEl ? sEl.value : '', e = eEl ? eEl.value : '';
+  function warna(bg, br, fg) {
+    box.style.background = bg; box.style.border = '1px solid ' + br; box.style.color = fg;
+  }
+  if (!s || !e) { box.style.display = 'none'; box.textContent = ''; return; }
+  box.style.display = 'block';
+  var ms = new Date(e).getTime() - new Date(s).getTime();
+  if (isNaN(ms) || ms <= 0) {
+    box.textContent = '⚠️ Jam selesai harus setelah jam mulai';
+    warna('#FEF2F2', '#FCA5A5', '#991B1B');
+    return;
+  }
+  box.textContent = '⏱️ Durasi: ' + msToJamMenit(ms) + ' (' + (Math.round((ms / 3600000) * 100) / 100) + ' jam)';
+  warna('#FFFBEB', '#FDE68A', '#92400E');
+}
+
 /** Satu-satunya cara sah menulis nilai picker. `s` = "YYYY-MM-DDTHH:MM" atau ''. */
 function dtSet(id, s) {
   var el = document.getElementById(id);
@@ -435,6 +464,7 @@ function modalTimerStop() {
     var now = new Date(), start = new Date(now.getTime()-totalMs);
     dtSet('fStart', formatToDatetimeLocal(start));
     dtSet('fEnd', formatToDatetimeLocal(now));
+    fHitungDurasi();
     showTimerSummary(totalMs, start, now);
   }
   updateModalTimerUI();
@@ -467,6 +497,7 @@ function openSubmitWithTimer(woId) {
     var now = new Date(), start = new Date(now.getTime()-totalMs);
     dtSet('fStart', formatToDatetimeLocal(start));
     dtSet('fEnd', formatToDatetimeLocal(now));
+    fHitungDurasi();
     showTimerSummary(totalMs, start, now);
   }
 }
@@ -852,7 +883,7 @@ function openSubmitForm(woId) {
     (activeWo.target_hours?' · Target: '+fmtJamMenit(activeWo.target_hours):'');
   document.getElementById('fKet').textContent = activeWo.keterangan ? '📝 '+activeWo.keterangan : '';
   document.getElementById('fKet').style.display = activeWo.keterangan ? 'block' : 'none';
-  dtSet('fStart',''); dtSet('fEnd','');
+  dtSet('fStart',''); dtSet('fEnd',''); fHitungDurasi();
   document.getElementById('fHm').value=''; document.getElementById('fKm').value='';
   document.getElementById('fPart').value='';
   // Tyreman: sembunyikan pilihan spare part (nilainya sudah dikosongkan di atas)
@@ -2875,6 +2906,10 @@ window.addEventListener('offline',renderAll);
   ['aOvStart','aOvEnd'].forEach(function(id) {
     var h = document.getElementById(id);
     if (h) h.addEventListener('change', function(){ aOvHitungDurasi(); perbaruiPenjagaOverride(); });
+  });
+  ['fStart','fEnd'].forEach(function(id) {
+    var h = document.getElementById(id);
+    if (h) h.addEventListener('change', fHitungDurasi);
   });
 })();
 

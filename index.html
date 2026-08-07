@@ -307,6 +307,10 @@
         <div><label>Jam Mulai *</label><div id="slotFStart"></div></div>
         <div><label>Jam Selesai *</label><div id="slotFEnd"></div></div>
       </div>
+      <!-- Bacaan balik durasi dari kedua picker. Angka jam/menit di dua kolom
+           terpisah sulit dijumlahkan di kepala, apalagi kalau melewati tengah
+           malam — tanpa ini orang baru sadar jamnya keliru setelah terkirim. -->
+      <div id="fDurBox" style="display:none;margin-top:8px;border-radius:8px;padding:9px 11px;font-size:13px;font-weight:700;text-align:center"></div>
       <!-- HM & KM disembunyikan di semua section (1 Agu 2026), opsional di server -->
       <div class="row2" id="hmKmWrap" style="display:none">
         <div><label>Hour Meter</label><input type="number" class="inp" id="fHm" min="0.1" step="any" placeholder="1250"></div>
