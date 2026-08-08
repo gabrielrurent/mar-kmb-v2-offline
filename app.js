@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v77';
+var APP_VERSION = 'v78';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -2772,7 +2772,17 @@ function renderRejectedList(){
         '<span class="k">Lokasi</span><span class="v">'+esc(locLabel(wo.location))+'</span>'+
         ((wo.created_by_name||wo.created_by)?'<span class="k">Pembuat</span><span class="v">'+esc(wo.created_by_name||wo.created_by)+'</span>':'')+
         '<span class="k">Tim</span><span class="v">'+(wo.team_names||[]).map(function(n){return esc(n);}).join(', ')+'</span>'+
+        // Siapa & kapan. Baris lama (sebelum 8 Agu 2026) kolomnya memang kosong
+        // — barisnya sengaja tidak ditampilkan, jangan dikarang.
+        (wo.rejected_by_name?'<span class="k">Oleh</span><span class="v">'+esc(wo.rejected_by_name)+
+          (wo.rejected_at?' · '+esc(fmtDateTime(wo.rejected_at)):'')+'</span>':'')+
       '</div></div>'+
+      // Alasannya ditaruh MENONJOL, bukan diselipkan di antara data lain —
+      // inilah yang dicari orang saat membuka layar ini.
+      (wo.rejection_reason
+        ? '<div class="ket" style="background:#fef2f2;border-color:#fca5a5;color:#991b1b">'+
+          (batal?'🗑 Alasan dibatalkan: ':'❌ Alasan ditolak: ')+esc(wo.rejection_reason)+'</div>'
+        : '')+
       (wo.keterangan?'<div class="ket">📝 '+esc(wo.keterangan)+'</div>':'')+
       '</div>';
   });
