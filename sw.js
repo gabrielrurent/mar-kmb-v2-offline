@@ -1,4 +1,4 @@
-var CACHE = 'mar-v75';
+var CACHE = 'mar-v76';
 var ASSETS = ['./', './index.html', './app.js', './manifest.json', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', function(e) {
   // cache:'reload' — WAJIB. addAll() memakai cache HTTP biasa, jadi app.js bisa
@@ -116,7 +116,10 @@ function swCheckPending() {
             var stageLbl = (role === 'superintendent') ? '(L2)' : '(L1)';
             for (var id in cur) {
               if (!prev[id]) {
-                if (isApprover) msgs.push('📋 Ada WO perlu di-approve ' + stageLbl + ': ' + cur[id].n);
+                // "masuk antrean", bukan "perlu di-approve". Antreannya dipegang
+                // bersama — kalimat perintah membuat approver merasa ditugasi
+                // secara pribadi, lalu merasa gagal saat rekannya lebih dulu.
+                if (isApprover) msgs.push('📋 WO masuk antrean ' + stageLbl + ': ' + cur[id].n);
                 else if (cur[id].s === 'pending_mechanic_work') msgs.push('📝 WO baru: ' + cur[id].n);
               } else if (prev[id].s !== cur[id].s) {
                 if (cur[id].s === 'approved') msgs.push('✅ ' + cur[id].n + ' disetujui');
@@ -134,6 +137,36 @@ function swCheckPending() {
               var body = msgs.slice(0, 3).join('\n') + (msgs.length > 3 ? '\n+' + (msgs.length - 3) + ' lainnya' : '');
               p = swNotify(body);
             }
+
+            // ── Tutup notifikasi approver yang sudah basi ─────────────────────
+            // Antrean approval dipegang beberapa orang. Semua dapat kabar
+            // bersamaan; begitu satu menanganinya, kabar di HP yang lain jadi
+            // basi — dan orang itu membuka aplikasi, tak menemukan apa pun,
+            // lalu merasa lalai atas pekerjaan yang sebenarnya sudah beres.
+            //
+            // Notifikasinya kabar, bukan tugas. Kalau WO yang disebut sudah
+            // tidak ada di antreannya, notifikasinya ditarik kembali.
+            //
+            // HANYA approver: notifikasi mekanik ("✅ disetujui") justru harus
+            // bertahan — WO-nya memang sudah keluar dari daftar, dan itulah
+            // kabar baik yang ingin dia lihat.
+            if (isApprover) {
+              var nomorAktif = {};
+              for (var ck in cur) nomorAktif[cur[ck].n] = true;
+              p = p.then(function() {
+                return self.registration.getNotifications().then(function(daftar) {
+                  for (var ni = 0; ni < daftar.length; ni++) {
+                    var teks = String(daftar[ni].body || '');
+                    var nomor = teks.match(/WO-[0-9A-Za-z\-]+/g);
+                    if (!nomor || !nomor.length) continue;   // bukan kabar ber-WO → biarkan
+                    var masihAda = false;
+                    for (var nj = 0; nj < nomor.length; nj++) if (nomorAktif[nomor[nj]]) masihAda = true;
+                    if (!masihAda) daftar[ni].close();
+                  }
+                }).catch(function(){});
+              });
+            }
+
             return p.then(save).then(function(){ return msgs.length; });
           });
         });

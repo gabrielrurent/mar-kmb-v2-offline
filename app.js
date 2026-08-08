@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v75';
+var APP_VERSION = 'v76';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -677,6 +677,9 @@ function syncNow(manual) {
       }
       return Promise.all(tasks);
     })
+    // Data sudah segar → baru di sinilah kegagalan boleh dinilai. Menilai lebih
+    // awal berarti menghakimi memakai salinan lama.
+    .then(function() { return _rekonsiliasiGagal(); })
     .then(function() { S.lastSync = new Date().toISOString(); subscribePush(); return kvSet('last_sync',S.lastSync); })
     .catch(function(e) { requestBgSync(); toast('⚠️ Sync gagal: '+e.message); })
     .then(function() { S.syncing = false; return refreshOutbox(); })
@@ -685,6 +688,85 @@ function syncNow(manual) {
       if (_syncAgain) { _syncAgain = false; return syncNow(false); }   // kirim sisa antrean
     });
 }
+/* ═══ REKONSILIASI KEGAGALAN ════════════════════════════════════════════════
+ * Kartu merah hanya untuk yang BENAR-BENAR masih menunggu tindakan.
+ *
+ * Sebagian besar "gagal" sebenarnya berarti pekerjaannya SUDAH masuk — server
+ * menolak kiriman kembar. Menampilkannya merah membuat orang takut membuang,
+ * lalu kartu menumpuk, lalu merah kehilangan artinya dan yang sungguhan ikut
+ * terabaikan.
+ *
+ * ATURAN BESI: hilangkan hanya atas BUKTI POSITIF bahwa pekerjaannya mendarat.
+ * "Tidak ketemu di daftar" BUKAN bukti — WO yang tak dikenali tetap ditampilkan.
+ * Diam yang keliru jauh lebih mahal daripada merah yang keliru.
+ */
+
+/** Cari WO di seluruh salinan lokal. null = tidak bisa dipastikan. */
+function _cariWo(woId) {
+  var lists = ['wos','pending','active','approved','rejected','transfers'];
+  for (var i = 0; i < lists.length; i++) {
+    var arr = S[lists[i]] || [];
+    for (var j = 0; j < arr.length; j++) {
+      if (String(arr[j].id) === String(woId)) return arr[j];
+    }
+  }
+  return null;
+}
+
+/** Apakah maksud op ini sudah tercapai di server? */
+function _sudahMendarat(op, wo) {
+  var s = String(wo.status || '');
+  switch (op.action) {
+    case 'submit_work':   return s !== 'pending_mechanic_work';
+    case 'approve_l1':    return s === 'pending_superintendent' || s === 'approved';
+    case 'approve_l2':    return s === 'approved';
+    case 'reject':        return s === 'rejected';
+    case 'request_transfer':
+    case 'approve_transfer':  return !!wo.transfer_status || s === 'pending_transfer';
+    default: return false;
+  }
+}
+
+/**
+ * Op yang tak mungkin lagi berhasil karena WO-nya sudah tamat lewat jalan lain
+ * (ditolak/dibatalkan orang lain). Bukan kegagalan approver — cukup diberitahu
+ * sekali, jangan ditinggalkan sebagai kartu merah yang tak bisa diapa-apakan.
+ */
+function _sudahTamat(op, wo) {
+  var s = String(wo.status || '');
+  if (s !== 'rejected' && s !== 'cancelled') return false;
+  return op.action === 'approve_l1' || op.action === 'approve_l2' ||
+         op.action === 'submit_work' || op.action === 'request_transfer';
+}
+
+function _rekonsiliasiGagal() {
+  return obAll().then(function(items) {
+    var gagal = items.filter(function(it) { return it.status === 'failed'; });
+    if (!gagal.length) return;
+
+    var hapus = [], kabar = [];
+    gagal.forEach(function(op) {
+      var wo = _cariWo(op.wo_id);
+      if (!wo) return;                       // tak bisa dipastikan → BIARKAN tampil
+      if (_sudahMendarat(op, wo)) { hapus.push(op.op_id); return; }
+      if (_sudahTamat(op, wo)) {
+        hapus.push(op.op_id);
+        kabar.push((op.wo_number || 'WO') + ' sudah ' +
+                   (String(wo.status) === 'cancelled' ? 'dibatalkan' : 'ditolak') + ' — tindakan Anda tidak diberlakukan');
+      }
+    });
+    if (!hapus.length) return;
+
+    return Promise.all(hapus.map(function(id) { return obDel(id); })).then(function() {
+      // Yang mendarat tak perlu diumumkan — bagi pengguna itu memang berhasil.
+      // Yang sudah tamat WAJIB diberitahu, sekali, supaya tak ada yang mengira
+      // keputusannya berlaku padahal tidak.
+      if (kabar.length) toast('ℹ️ ' + kabar[0] + (kabar.length > 1 ? ' (+' + (kabar.length - 1) + ' lagi)' : ''));
+      return refreshOutbox();
+    });
+  }).catch(function(){});
+}
+
 /**
  * Selaraskan status WO di salinan lokal begitu operasinya BERHASIL, tanpa
  * menunggu tarikan data berikutnya.
@@ -2108,6 +2190,29 @@ function queueOverride() {
     syncNow(false);
   });
 }
+/**
+ * Lepaskan WO dari antrean approver SEKARANG, tanpa menunggu server.
+ *
+ * Kenapa: approver menekan Approve, modal tertutup, tapi kartunya masih
+ * terpampang sampai tarikan data berikutnya. Selama beberapa detik itu ia
+ * tampak seolah belum tersetujui — di situlah orang menekan lagi, lalu
+ * bertanya-tanya kenapa muncul peringatan.
+ *
+ * AMAN: ini hanya salinan di layar. Kebenaran tetap milik server — pullPending()
+ * berikutnya akan MENGEMBALIKAN kartunya kalau ternyata memang masih menunggu
+ * tindakan. Jadi menghilangkan terlalu cepat tidak bisa membuat pekerjaan luput.
+ */
+function _lepasDariAntrean(woId) {
+  if (!woId) return;
+  var buang = function(arr) {
+    return (arr || []).filter(function(w) { return String(w.id) !== String(woId); });
+  };
+  S.pending   = buang(S.pending);
+  S.transfers = buang(S.transfers);
+  kvSet('pending', S.pending).catch(function(){});
+  kvSet('transfers', S.transfers).catch(function(){});
+}
+
 function queueApprove(level) {
   // Lapis kedua penjagaan. Tombolnya sudah di-disable, tapi ini jalur uang —
   // satu klik yang lolos berarti WO disetujui dengan angka lama dan override
@@ -2121,9 +2226,15 @@ function queueApprove(level) {
     // tanpa approver mengetik hal yang sama dua kali.
     payload:{ wo_id:activeApproval.id, safety_incident:document.getElementById('aSafety').checked, mtbf_status:document.getElementById('aMtbf').value },
     status:'queued', created_at:new Date().toISOString(), label:(level===1?'L1':'L2')+' '+activeApproval.wo_number };
+  var _no = activeApproval.wo_number;
   obPut(op).then(refreshOutbox).then(function() {
+    _lepasDariAntrean(op.wo_id);
     closeModal('approveModal'); renderAll();
-    toast(navigator.onLine?'📮 Mengirim...':'📮 Tersimpan!');
+    // Sebut APA yang barusan dia putuskan, bukan apa yang sedang dikerjakan
+    // aplikasi. "Mengirim..." memaksa approver menunggui prosesnya; yang dia
+    // butuhkan cuma kepastian bahwa keputusannya sudah tercatat.
+    toast(navigator.onLine ? ('✅ ' + _no + ' disetujui')
+                           : ('✅ ' + _no + ' disetujui — terkirim saat ada sinyal'));
     syncNow(false);
   });
 }
@@ -2134,9 +2245,12 @@ function queueReject() {
   var op = { op_id:uuid(), seq:(_enqSeq++), action:'reject', wo_id:activeApproval.id, wo_number:activeApproval.wo_number,
     payload:{ wo_id:activeApproval.id, stage:stage, reason:reason },
     status:'queued', created_at:new Date().toISOString(), label:'Reject '+activeApproval.wo_number };
+  var _noR = activeApproval.wo_number;
   obPut(op).then(refreshOutbox).then(function() {
+    _lepasDariAntrean(op.wo_id);
     closeModal('approveModal'); renderAll();
-    toast(navigator.onLine?'📮 Mengirim...':'📮 Tersimpan!');
+    toast(navigator.onLine ? ('❌ ' + _noR + ' ditolak')
+                           : ('❌ ' + _noR + ' ditolak — terkirim saat ada sinyal'));
     syncNow(false);
   });
 }
@@ -2147,8 +2261,34 @@ function retryOp(opId) {
     for (var i=0;i<items.length;i++) { if (items[i].op_id===opId) { items[i].status='failed_retry'; return obPut(items[i]); } }
   }).then(function() { syncNow(true); });
 }
+/**
+ * Terjemahkan kesalahan server jadi kalimat yang bisa ditindaklanjuti.
+ * Teks aslinya ditulis untuk pengembang ("WO must be in pending_supervisor
+ * status") — bagi orang di lapangan itu cuma menakutkan tanpa memberi arah.
+ */
+function _pesanGagal(op) {
+  var e = String(op.error || '');
+  if (/must be in pending_supervisor/i.test(e))      return 'WO ini belum sampai di tahap L1. Tekan 🔄 Refresh, lalu lihat lagi.';
+  if (/must be in pending_superintendent/i.test(e))  return 'WO ini belum sampai di tahap L2. Tekan 🔄 Refresh, lalu lihat lagi.';
+  if (/not found/i.test(e))                          return 'WO ini sudah tidak ada di sistem. Buang saja kiriman ini.';
+  if (/scope|permission|Permission/i.test(e))        return 'WO ini di luar cluster Anda — approver lain yang menanganinya. Buang saja.';
+  if (/sibuk|busy|Lock/i.test(e))                    return 'Sistem sedang sibuk saat itu. Tekan "Coba lagi".';
+  if (/koneksi|network|timeout/i.test(e))            return 'Sambungan terputus saat mengirim. Tekan "Coba lagi".';
+  return e ? ('Belum terkirim: ' + e) : 'Belum terkirim.';
+}
+
 function discardOp(opId) {
-  if (!confirm('Buang kiriman ini?')) return;
+  var op = null;
+  for (var i = 0; i < (S.outbox || []).length; i++) if (S.outbox[i].op_id === opId) op = S.outbox[i];
+  var no = (op && op.wo_number) ? op.wo_number : 'WO';
+  // Sebut akibatnya. Selama ini pertanyaannya cuma "Buang kiriman ini?" — dan
+  // orang tidak tahu apakah WO-nya ikut hilang, jadi mereka memilih tidak
+  // menyentuh apa pun dan kartunya menumpuk.
+  var pesan = 'Buang kiriman ini?\n\n' +
+    '• ' + no + ' TIDAK akan terhapus dari sistem.\n' +
+    '• Yang dibuang hanya percobaan kirim yang gagal.\n' +
+    '• Kalau pekerjaannya memang belum masuk, Anda perlu mengisinya lagi.';
+  if (!confirm(pesan)) return;
   obDel(opId).then(refreshOutbox).then(renderAll);
 }
 
@@ -2208,7 +2348,10 @@ function fmtDateTime(iso){
 function badgeFor(wo,pendingOp) {
   if (pendingOp) {
     if (pendingOp.status==='queued') return ['📮 Dikirim','#b45309'];
-    if (pendingOp.status==='failed') return ['❌ Ditolak','#b91c1c'];
+    // "Ditolak" berarti APPROVER MENOLAK WO ini — pernyataan yang keliru untuk
+    // kiriman yang sekadar tidak sampai, dan itulah yang selama ini membuat
+    // orang panik lalu takut menyentuh apa pun.
+    if (pendingOp.status==='failed') return ['⚠️ Belum terkirim','#b45309'];
     // 'done' TIDAK menimpa: pakai status asli WO agar berubah (Terkirim→L1→L2→Approved) setelah sync
   }
   var s=String(wo.status||'');
@@ -2260,8 +2403,12 @@ function renderAll() {
   // failed outbox
   var failHtml = '';
   S.outbox.filter(function(o){return o.status==='failed';}).forEach(function(o) {
-    failHtml += '<div class="card err"><b>'+esc(opLabel(o))+'</b><br>'+esc(o.error||'-')+
-      '<br><button class="mini" onclick="retryOp(\''+o.op_id+'\')">🔁 Coba lagi</button> '+
+    // Yang sampai ke sini SUDAH lolos rekonsiliasi: pekerjaannya benar-benar
+    // belum masuk dan masih menunggu tindakan. Jadi kalimatnya boleh tegas —
+    // dan "Coba lagi" disebut aman, karena server memang menolak kiriman kembar.
+    failHtml += '<div class="card err"><b>'+esc(opLabel(o))+'</b>'+
+      '<div style="margin:4px 0 8px">'+esc(_pesanGagal(o))+'</div>'+
+      '<button class="mini" onclick="retryOp(\''+o.op_id+'\')">🔁 Coba lagi (aman, tidak akan dobel)</button> '+
       '<button class="mini gray" onclick="discardOp(\''+o.op_id+'\')">🗑 Buang</button></div>';
   });
   document.getElementById('failedOps').innerHTML = failHtml;
@@ -2799,8 +2946,10 @@ function queueApproveTransfer(woId, woNumber){
     payload:{wo_id:woId, target_mechanic_ids:targets},
     status:'queued', created_at:new Date().toISOString() };
   obPut(op).then(refreshOutbox).then(function(){
+    _lepasDariAntrean(woId);
     renderAll();
-    toast(navigator.onLine?'📮 Mengirim...':'📮 Tersimpan! Terkirim saat ada sinyal');
+    toast(navigator.onLine ? ('✅ Transfer '+(woNumber||'WO')+' disetujui')
+                           : ('✅ Transfer '+(woNumber||'WO')+' disetujui — terkirim saat ada sinyal'));
     syncNow(false);
   });
 }
@@ -2813,8 +2962,10 @@ function queueRejectTransfer(woId, woNumber){
     payload:{wo_id:woId, reason:reason.trim()},
     status:'queued', created_at:new Date().toISOString() };
   obPut(op).then(refreshOutbox).then(function(){
+    _lepasDariAntrean(woId);
     renderAll();
-    toast(navigator.onLine?'📮 Mengirim...':'📮 Tersimpan! Terkirim saat ada sinyal');
+    toast(navigator.onLine ? ('❌ Transfer '+(woNumber||'WO')+' ditolak')
+                           : ('❌ Transfer '+(woNumber||'WO')+' ditolak — terkirim saat ada sinyal'));
     syncNow(false);
   });
 }
