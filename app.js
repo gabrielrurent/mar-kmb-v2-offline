@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v79';
+var APP_VERSION = 'v80';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -3096,7 +3096,11 @@ function renderApprovedList(){
     var safety = wo.safety_incident ? '<span class="badge" style="background:#b91c1c">SAFETY</span>' : '';
     html+='<div class="card"><div class="cardTop"><b>'+esc(wo.wo_number)+'</b><span class="badge" style="background:#15803d">✅ Approved</span>'+
       (wo.section?'<span class="badge" style="background:#334155">'+esc(wo.section)+'</span>':'')+othersBadge+safety+'</div>'+
-      '<div class="cardBody"><b>'+esc(wo.component_name||'-')+'</b><br>'+
+      '<div class="cardBody"><b>'+esc(wo.component_name||'-')+'</b>'+
+      // Unit disebut di kartu approved. Sebelumnya tidak dikirim server sama
+      // sekali, jadi saat menengok pekerjaan yang sudah selesai tak ada
+      // keterangan unitnya — padahal itu yang dipakai mencocokkan.
+      (wo.unit_name?' · '+esc(wo.unit_name):'')+'<br>'+
       '📍 Lokasi: '+esc(locLabel(wo.location))+'<br>'+
       'Poin: '+(wo.final_points||0)+' · Rp '+fmtIdr(wo.final_idr||0)+'<br>'+
       'Aktual: '+fmtJamMenit(wo.actual_hours)+
