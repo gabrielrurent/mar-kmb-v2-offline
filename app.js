@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v80';
+var APP_VERSION = 'v81';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -726,7 +726,15 @@ function _cariWo(woId) {
   for (var i = 0; i < lists.length; i++) {
     var arr = S[lists[i]] || [];
     for (var j = 0; j < arr.length; j++) {
-      if (String(arr[j].id) === String(woId)) return arr[j];
+      var w = arr[j];
+      // Antrean transfer memakai `wo_id`, bukan `id` — perlu dicocokkan keduanya.
+      if (String(w.id || w.wo_id) !== String(woId)) continue;
+      // TAPI entri transfer tidak membawa `status`, dan seluruh penilaian
+      // "sudah mendarat / sudah tamat" bersandar pada status. Mengembalikannya
+      // berarti menilai memakai keterangan yang tak ada — lebih baik dianggap
+      // tidak bisa dipastikan, dan kartunya tetap ditampilkan.
+      if (!w.status) continue;
+      return w;
     }
   }
   return null;
@@ -829,6 +837,7 @@ function _perbaruiStatusLokal(op) {
 
 function flushOutbox() {
   var sent = 0;
+  _adaRetryLater = false;   // dinilai ulang tiap pengosongan; jangan bawa sisa lama
   return obAll().then(function(items) {
     var queue = items.filter(function(it){return it.status==='queued'||it.status==='failed_retry';});
     // FIFO: getAll IndexedDB terurut op_id (uuid acak) — urutannya praktis acak.
@@ -2166,6 +2175,7 @@ function _bacaPerubahanOverride() {
 function perbaruiPenjagaOverride() {
   var d = _bacaPerubahanOverride();
   var perluSimpan = d.ubah;
+  _sedangPutus = false;   // modal dinilai ulang → keputusan baru boleh dibuat
   var b1 = document.getElementById('aBtnL1'), b2 = document.getElementById('aBtnL2');
   var wr = document.getElementById('aOvWarn');
   [b1, b2].forEach(function(b) {
@@ -2243,8 +2253,13 @@ function queueOverride() {
  */
 function _lepasDariAntrean(woId) {
   if (!woId) return;
+  // Entri antrean transfer memakai `wo_id`, BUKAN `id` — tak ada medan `id`
+  // sama sekali di sana. Mencocokkan `w.id` saja membuat penghapusan diam-diam
+  // gagal untuk transfer: kartunya tetap terpampang setelah diputuskan.
   var buang = function(arr) {
-    return (arr || []).filter(function(w) { return String(w.id) !== String(woId); });
+    return (arr || []).filter(function(w) {
+      return String(w.id || w.wo_id) !== String(woId);
+    });
   };
   S.pending   = buang(S.pending);
   S.transfers = buang(S.transfers);
@@ -2252,12 +2267,34 @@ function _lepasDariAntrean(woId) {
   kvSet('transfers', S.transfers).catch(function(){});
 }
 
+/**
+ * Kunci tombol keputusan saat satu keputusan sedang dibuat.
+ *
+ * Mekanik sudah punya penjaga serupa (_sedangKirim); approver belum. Tanpa ini
+ * satu ketukan ganda melahirkan DUA operasi ber-op_id berbeda: server aman
+ * (idempoten + kunci hulu), tapi antrean menampilkan "2 sedang dikirim" untuk
+ * satu keputusan — persis kebingungan yang sedang kita hilangkan.
+ *
+ * Dibuka kembali saat modal approval dibuka untuk WO berikutnya, lewat
+ * perbaruiPenjagaOverride().
+ */
+var _sedangPutus = false;
+function _kunciTombolPutus() {
+  _sedangPutus = true;
+  ['aBtnL1','aBtnL2'].forEach(function(id) {
+    var b = document.getElementById(id);
+    if (b) { b.disabled = true; b.style.opacity = '.45'; b.style.cursor = 'not-allowed'; }
+  });
+}
+
 function queueApprove(level) {
+  if (_sedangPutus) { toast('⏳ Keputusan sedang diproses…'); return; }
   // Lapis kedua penjagaan. Tombolnya sudah di-disable, tapi ini jalur uang —
   // satu klik yang lolos berarti WO disetujui dengan angka lama dan override
   // yang sudah diketik hilang tanpa jejak.
   var _g = _bacaPerubahanOverride();
   if (_g.ubah) { perbaruiPenjagaOverride(); toast(_g.salah || '⚠️ Simpan Override dulu sebelum Approve'); return; }
+  _kunciTombolPutus();
   var action = level===1 ? 'approve_l1' : 'approve_l2';
   var op = { op_id:uuid(), seq:(_enqSeq++), action:action, wo_id:activeApproval.id, wo_number:activeApproval.wo_number,
     // notes tidak lagi diketik approver (kotak Catatan dihapus). Server yang
@@ -2278,8 +2315,10 @@ function queueApprove(level) {
   });
 }
 function queueReject() {
+  if (_sedangPutus) { toast('⏳ Keputusan sedang diproses…'); return; }
   var reason = document.getElementById('aReason').value.trim();
   if (!reason) { toast('Isi alasan reject'); return; }
+  _kunciTombolPutus();
   var stage = activeApproval.status==='pending_superintendent' ? 'superintendent' : 'supervisor';
   var op = { op_id:uuid(), seq:(_enqSeq++), action:'reject', wo_id:activeApproval.id, wo_number:activeApproval.wo_number,
     payload:{ wo_id:activeApproval.id, stage:stage, reason:reason },
@@ -3030,9 +3069,16 @@ function renderPendingList(){
   // di siklus yang sama masih melaporkannya pending → kartu balik, padahal
   // approver baru saja melihat "disetujui". Jejaknya tetap ada di bilah
   // "📮 menunggu sinyal", jadi tak ada yang lenyap tanpa keterangan.
+  // HANYA op keputusan akhir yang menyembunyikan kartu. `save_override` sengaja
+  // TIDAK ikut: menyimpan override adalah langkah di TENGAH menilai, bukan
+  // keputusan. Kalau ikut disaring, approver yang sedang offline menyimpan
+  // override lalu kehilangan kartunya — dan tak bisa approve sama sekali sampai
+  // ada sinyal.
+  var OP_KEPUTUSAN = ['approve_l1','approve_l2','reject','approve_transfer','reject_transfer'];
   var opMenunggu = {};
   (S.outbox || []).forEach(function(o) {
-    if ((o.status === 'queued' || o.status === 'failed_retry') && o.wo_id) opMenunggu[String(o.wo_id)] = true;
+    if ((o.status === 'queued' || o.status === 'failed_retry') &&
+        o.wo_id && OP_KEPUTUSAN.indexOf(o.action) !== -1) opMenunggu[String(o.wo_id)] = true;
   });
   var daftar = S.pending.filter(function(wo){ return !opMenunggu[String(wo.id)]; });
   var tertahan = S.pending.length - daftar.length;

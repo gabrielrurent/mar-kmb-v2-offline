@@ -1,4 +1,4 @@
-var CACHE = 'mar-v80';
+var CACHE = 'mar-v81';
 var ASSETS = ['./', './index.html', './app.js', './manifest.json', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', function(e) {
   // cache:'reload' — WAJIB. addAll() memakai cache HTTP biasa, jadi app.js bisa
@@ -62,6 +62,7 @@ function swNotify(body, tag) {
 }
 function swFlushOutbox() {
   var sent = 0;
+  var adaRamai = false;
   return swDb().then(function(d) {
     return swReq(d, 'kv', 'readonly', function(s){ return s.get('token'); }).then(function(token) {
       if (!token) return;
@@ -76,7 +77,7 @@ function swFlushOutbox() {
             }).then(function(r){ return r.json(); }).then(function(r) {
               if (r.success) { it.status = 'done'; it.result = r.result; sent++; }
               // retry_later = server ramai → tetap antre, jangan ditandai gagal.
-              else if (r.retry_later) { it.status = 'queued'; it.error = ''; }
+              else if (r.retry_later) { it.status = 'queued'; it.error = ''; adaRamai = true; }
               else { it.status = 'failed'; it.error = (typeof r.error === 'string') ? r.error : JSON.stringify(r.error); }
               return swReq(d, 'outbox', 'readwrite', function(s){ return s.put(it); });
             });
@@ -86,6 +87,10 @@ function swFlushOutbox() {
         // Notif "tidak lagi antre" — juga saat kirim sebagian lalu putus (rethrow utk retry)
         return chain
           .then(function(){ if (sent > 0) return swNotify('✅ ' + sent + ' operasi terkirim — tidak lagi antre'); })
+          // Server ramai: SENGAJA dilempar supaya peramban menjadwalkan ulang
+          // background sync-nya. Tanpa ini event 'sync' dianggap sukses, tak ada
+          // percobaan berikutnya, dan op menganggur sampai aplikasi dibuka.
+          .then(function(){ if (adaRamai) throw new Error('server ramai — dicoba lagi'); })
           .catch(function(err) {
             var p = sent > 0 ? swNotify('✅ ' + sent + ' operasi terkirim — sisanya menunggu sinyal') : Promise.resolve();
             return p.then(function(){ throw err; });
