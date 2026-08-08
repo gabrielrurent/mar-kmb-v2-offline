@@ -1,4 +1,4 @@
-var CACHE = 'mar-v76';
+var CACHE = 'mar-v77';
 var ASSETS = ['./', './index.html', './app.js', './manifest.json', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', function(e) {
   // cache:'reload' — WAJIB. addAll() memakai cache HTTP biasa, jadi app.js bisa
@@ -60,6 +60,8 @@ function swFlushOutbox() {
               body: JSON.stringify({token: token, action: it.action, data: it.payload || {}, op_id: it.op_id})
             }).then(function(r){ return r.json(); }).then(function(r) {
               if (r.success) { it.status = 'done'; it.result = r.result; sent++; }
+              // retry_later = server ramai → tetap antre, jangan ditandai gagal.
+              else if (r.retry_later) { it.status = 'queued'; it.error = ''; }
               else { it.status = 'failed'; it.error = (typeof r.error === 'string') ? r.error : JSON.stringify(r.error); }
               return swReq(d, 'outbox', 'readwrite', function(s){ return s.put(it); });
             });

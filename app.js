@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v76';
+var APP_VERSION = 'v77';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -826,6 +826,10 @@ function flushOutbox() {
               toast('✅ ' + (it.wo_number || 'WO') + ' memang sudah terkirim sebelumnya');
             }
           }
+          // retry_later = server sedang ramai, BUKAN pekerjaan ini salah.
+          // Biarkan tetap mengantre; jangan munculkan kartu merah untuk sesuatu
+          // yang akan terkirim sendiri sebentar lagi.
+          else if (r.retry_later) { it.status='queued'; it.error=''; }
           else { it.status='failed'; it.error=(typeof r.error==='string')?r.error:JSON.stringify(r.error); }
           // Perbarui tampilan tiap item selesai — antrean panjang tidak terlihat macet.
           return obPut(it).then(function(){ return refreshOutbox(); }).then(function(){ renderAll(); });
