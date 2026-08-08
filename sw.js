@@ -1,4 +1,4 @@
-var CACHE = 'mar-v78';
+var CACHE = 'mar-v79';
 var ASSETS = ['./', './index.html', './app.js', './manifest.json', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', function(e) {
   // cache:'reload' — WAJIB. addAll() memakai cache HTTP biasa, jadi app.js bisa
@@ -37,10 +37,25 @@ function swReq(d, store, mode, fn) {
     rq.onerror = function(){ rej(rq.error); };
   });
 }
-function swNotify(body) {
+/**
+ * @param {string} body isi notifikasi
+ * @param {string=} tag  penanda. Notifikasi ber-tag SAMA saling MENIMPA.
+ *
+ * Dulu tag selalu `'mar-' + body.slice(0,16)`. Enam belas karakter pertama
+ * pesan antrean approver ("📋 WO masuk antr…") dan pesan WO baru mekanik
+ * ("📝 WO baru: WO-2…") SELALU sama, jadi setiap kabar menimpa kabar
+ * sebelumnya: dua WO datang berurutan, yang terlihat hanya yang terakhir.
+ * Sekarang tag disebut TERANG-TERANGAN di tiap pemanggil — menimpa kalau
+ * memang disengaja, berdiri sendiri kalau isinya beda.
+ */
+function swNotify(body, tag) {
   try {
     if (self.Notification && Notification.permission === 'granted') {
-      return self.registration.showNotification('MAR Offline', {body: body, icon: './icon-192.png', badge: './icon-192.png', tag: 'mar-' + body.slice(0, 16)});
+      return self.registration.showNotification('MAR Offline', {
+        body: body, icon: './icon-192.png', badge: './icon-192.png',
+        // Tanpa tag khusus: seluruh isi jadi penandanya, bukan 16 huruf pertama.
+        tag: tag || ('mar-' + body.replace(/\s+/g, ' '))
+      });
     }
   } catch (e) {}
   return Promise.resolve();
@@ -137,7 +152,10 @@ function swCheckPending() {
             var p = Promise.resolve();
             if (msgs.length) {
               var body = msgs.slice(0, 3).join('\n') + (msgs.length > 3 ? '\n+' + (msgs.length - 3) + ' lainnya' : '');
-              p = swNotify(body);
+              // Antrean approver: SATU kabar yang berdiri dan selalu mutakhir —
+              // sengaja saling menimpa supaya tidak menumpuk. Kabar lain
+              // (WO baru, disetujui, ditolak) berdiri sendiri-sendiri.
+              p = swNotify(body, isApprover ? 'mar-antrean' : undefined);
             }
 
             // ── Tutup notifikasi approver yang sudah basi ─────────────────────

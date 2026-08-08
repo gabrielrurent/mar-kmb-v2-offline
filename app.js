@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v78';
+var APP_VERSION = 'v79';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -640,6 +640,12 @@ function requestBgSync() {
 
 /* ── Sync ── */
 var _syncAgain = false;   // ada permintaan sync yang datang saat sync sedang jalan
+// Ada op yang dijawab retry_later (server ramai). Tanpa penjadwalan ulang, op
+// itu menganggur di antrean sampai ada pemicu sync lain — bisa berjam-jam.
+// Dibatasi supaya tidak berputar tanpa henti saat server benar-benar sibuk.
+var _adaRetryLater = false;
+var _percobaanRamai = 0;
+var MAX_PERCOBAAN_RAMAI = 3;
 function syncNow(manual) {
   // JANGAN buang permintaan ini. Dulu (dan masih terjadi di SUM sebelum diperbaiki):
   // approve beruntun → klik ke-2 & ke-3 datang saat sync pertama masih jalan, lalu
@@ -685,7 +691,20 @@ function syncNow(manual) {
     .then(function() { S.syncing = false; return refreshOutbox(); })
     .then(function() {
       renderAll();
-      if (_syncAgain) { _syncAgain = false; return syncNow(false); }   // kirim sisa antrean
+      if (_syncAgain) { _syncAgain = false; _percobaanRamai = 0; return syncNow(false); }   // kirim sisa antrean
+      // Server ramai → coba lagi sebentar. Tanpa ini op-nya menganggur tanpa
+      // batas waktu, dan pengguna tak punya cara tahu selain menekan Refresh.
+      if (_adaRetryLater) {
+        _adaRetryLater = false;
+        if (_percobaanRamai < MAX_PERCOBAAN_RAMAI) {
+          _percobaanRamai++;
+          setTimeout(function(){ syncNow(false); }, 4000 * _percobaanRamai);
+        } else {
+          _percobaanRamai = 0;
+          requestBgSync();   // serahkan ke peramban; ia akan membangunkan SW nanti
+          toast('⏳ Server sedang ramai — kiriman tetap di antrean, dicoba lagi otomatis');
+        }
+      } else { _percobaanRamai = 0; }
     });
 }
 /* ═══ REKONSILIASI KEGAGALAN ════════════════════════════════════════════════
@@ -713,11 +732,20 @@ function _cariWo(woId) {
   return null;
 }
 
-/** Apakah maksud op ini sudah tercapai di server? */
+/**
+ * Apakah maksud op ini sudah tercapai di server?
+ *
+ * Daftarnya SENGAJA disebut satu per satu, bukan "pokoknya bukan status lama".
+ * Versi pertama saya menulis `s !== 'pending_mechanic_work'` untuk submit_work —
+ * dan status 'rejected' pun memenuhi syarat itu, sehingga kiriman pada WO yang
+ * DITOLAK ikut dianggap berhasil lalu dihapus diam-diam. Justru kebalikan dari
+ * yang dijanjikan: yang tamat harus diberitahu, bukan dibungkam.
+ */
 function _sudahMendarat(op, wo) {
   var s = String(wo.status || '');
+  var lanjutApproval = (s === 'pending_supervisor' || s === 'pending_superintendent' || s === 'approved');
   switch (op.action) {
-    case 'submit_work':   return s !== 'pending_mechanic_work';
+    case 'submit_work':   return lanjutApproval;
     case 'approve_l1':    return s === 'pending_superintendent' || s === 'approved';
     case 'approve_l2':    return s === 'approved';
     case 'reject':        return s === 'rejected';
@@ -729,14 +757,19 @@ function _sudahMendarat(op, wo) {
 
 /**
  * Op yang tak mungkin lagi berhasil karena WO-nya sudah tamat lewat jalan lain
- * (ditolak/dibatalkan orang lain). Bukan kegagalan approver — cukup diberitahu
- * sekali, jangan ditinggalkan sebagai kartu merah yang tak bisa diapa-apakan.
+ * (ditolak/dibatalkan). Bukan kegagalan orangnya — cukup diberitahu sekali,
+ * jangan ditinggalkan sebagai kartu merah yang tak bisa diapa-apakan.
+ *
+ * DIPERIKSA LEBIH DULU daripada _sudahMendarat: status tamat lebih spesifik,
+ * dan kalau urutannya terbalik ia tak akan pernah terjangkau.
  */
 function _sudahTamat(op, wo) {
   var s = String(wo.status || '');
   if (s !== 'rejected' && s !== 'cancelled') return false;
-  return op.action === 'approve_l1' || op.action === 'approve_l2' ||
-         op.action === 'submit_work' || op.action === 'request_transfer';
+  // 'reject' ikut: menolak WO yang sudah dibatalkan sama saja — tak ada lagi
+  // yang bisa dikerjakan, jadi jangan tinggalkan kartu merah abadi.
+  return ['approve_l1','approve_l2','submit_work','request_transfer',
+          'approve_transfer','reject_transfer','reject'].indexOf(op.action) !== -1;
 }
 
 function _rekonsiliasiGagal() {
@@ -748,12 +781,14 @@ function _rekonsiliasiGagal() {
     gagal.forEach(function(op) {
       var wo = _cariWo(op.wo_id);
       if (!wo) return;                       // tak bisa dipastikan → BIARKAN tampil
-      if (_sudahMendarat(op, wo)) { hapus.push(op.op_id); return; }
+      // TAMAT diperiksa DULU — status tamat lebih spesifik daripada "sudah maju".
       if (_sudahTamat(op, wo)) {
         hapus.push(op.op_id);
         kabar.push((op.wo_number || 'WO') + ' sudah ' +
                    (String(wo.status) === 'cancelled' ? 'dibatalkan' : 'ditolak') + ' — tindakan Anda tidak diberlakukan');
+        return;
       }
+      if (_sudahMendarat(op, wo)) { hapus.push(op.op_id); return; }
     });
     if (!hapus.length) return;
 
@@ -829,7 +864,7 @@ function flushOutbox() {
           // retry_later = server sedang ramai, BUKAN pekerjaan ini salah.
           // Biarkan tetap mengantre; jangan munculkan kartu merah untuk sesuatu
           // yang akan terkirim sendiri sebentar lagi.
-          else if (r.retry_later) { it.status='queued'; it.error=''; }
+          else if (r.retry_later) { it.status='queued'; it.error=''; _adaRetryLater = true; }
           else { it.status='failed'; it.error=(typeof r.error==='string')?r.error:JSON.stringify(r.error); }
           // Perbarui tampilan tiap item selesai — antrean panjang tidak terlihat macet.
           return obPut(it).then(function(){ return refreshOutbox(); }).then(function(){ renderAll(); });
@@ -2393,7 +2428,11 @@ function renderAll() {
   // outbox info — bisa diklik utk lihat WO mana yg mengantre + waktu masuk antrean
   var queued = S.outbox.filter(function(o){return o.status==='queued'||o.status==='failed_retry';});
   var oi = document.getElementById('outboxInfo');
-  oi.textContent = queued.length ? ('📮 '+queued.length+' menunggu sinyal '+(S.showOutbox?'▲':'▼')) : '';
+  // "menunggu sinyal" hanya benar saat offline. Sejak ada retry_later, op juga
+  // bisa mengantre karena server ramai — dan saat itu sinyalnya baik-baik saja.
+  oi.textContent = queued.length
+    ? ('📮 '+queued.length+(navigator.onLine ? ' sedang dikirim ' : ' menunggu sinyal ')+(S.showOutbox?'▲':'▼'))
+    : '';
   var od = document.getElementById('outboxDetail');
   if (queued.length && S.showOutbox) {
     od.style.display='block';
@@ -2985,9 +3024,26 @@ function queueRejectTransfer(woId, woNumber){
 }
 
 function renderPendingList(){
-  if (!S.pending.length) return '<div class="empty">Tidak ada WO pending dalam scope Anda.</div>';
-  var html='<div class="sub">'+S.pending.length+' WO menunggu approval</div>';
-  S.pending.forEach(function(wo){
+  // WO yang keputusannya SUDAH diambil dan sedang mengantre kirim tidak
+  // ditampilkan lagi. Tanpa penyaringan ini kartunya bisa muncul kembali:
+  // approve → kartu lepas → server menjawab "ramai" (retry_later) → pullPending
+  // di siklus yang sama masih melaporkannya pending → kartu balik, padahal
+  // approver baru saja melihat "disetujui". Jejaknya tetap ada di bilah
+  // "📮 menunggu sinyal", jadi tak ada yang lenyap tanpa keterangan.
+  var opMenunggu = {};
+  (S.outbox || []).forEach(function(o) {
+    if ((o.status === 'queued' || o.status === 'failed_retry') && o.wo_id) opMenunggu[String(o.wo_id)] = true;
+  });
+  var daftar = S.pending.filter(function(wo){ return !opMenunggu[String(wo.id)]; });
+  var tertahan = S.pending.length - daftar.length;
+
+  if (!daftar.length) {
+    return '<div class="empty">Tidak ada WO pending dalam scope Anda.' +
+           (tertahan ? '<br><span class="sub">' + tertahan + ' keputusan sedang dikirim.</span>' : '') + '</div>';
+  }
+  var html='<div class="sub">'+daftar.length+' WO menunggu approval'+
+           (tertahan ? ' · '+tertahan+' keputusan sedang dikirim' : '')+'</div>';
+  daftar.forEach(function(wo){
     var isL2 = wo.status==='pending_superintendent';
     html+='<div class="card"><div class="cardTop"><b>'+esc(wo.wo_number)+'</b></div>'+
       // Semua keterangan jadi SATU bilah menyambung di bawah nomor WO —
