@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v81';
+var APP_VERSION = 'v82';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -2511,8 +2511,12 @@ function renderMonitorTab(el) {
     return;
   }
   var ov = S.monitoringOverall || {};
+  // Periode WAJIB disebut. Angka Approved kini hanya bulan berjalan — tanpa
+  // keterangan ini orang melihat angkanya turun dan mengira datanya hilang.
   var html = '<div class="card" style="padding:12px">'+
-    '<b>Ringkasan scope Anda</b><div class="sub" style="margin-top:4px">'+
+    '<b>Ringkasan scope Anda</b>'+
+    (ov.periode ? '<span class="badge" style="background:#0f766e;margin-left:6px">'+esc(ov.periode)+'</span>' : '')+
+    '<div class="sub" style="margin-top:4px">'+
       '📝 Perlu diisi: <b>'+(ov.pending_mechanic_work||0)+'</b> · '+
       '⏳ L1: <b>'+(ov.pending_l1||0)+'</b> · '+
       '⏳ L2: <b>'+(ov.pending_l2||0)+'</b> · '+
@@ -3135,8 +3139,10 @@ function renderActiveList(){
   return html;
 }
 function renderApprovedList(){
-  if (!S.approved.length) return '<div class="empty">Belum ada WO approved.<br>Tekan 🔄 Refresh saat online.</div>';
-  var html='<div class="sub">'+S.approved.length+' WO approved (maks 100 terbaru)</div>';
+  if (!S.approved.length) return '<div class="empty">Belum ada WO disetujui bulan ini.<br>Bulan sebelumnya diambil lewat Export Payroll.</div>';
+  // Sebut batasnya terang-terangan: daftar ini BULAN BERJALAN, bukan seluruh
+  // riwayat. Tanpa kalimat ini orang mencari WO bulan lalu lalu mengira hilang.
+  var html='<div class="sub">'+S.approved.length+' WO disetujui bulan ini (maks 100 terbaru) · bulan sebelumnya lewat Export Payroll</div>';
   S.approved.forEach(function(wo){
     var othersBadge = wo.is_others ? '<span class="badge" style="background:'+WARNA.others+'">Others</span>' : '';
     var safety = wo.safety_incident ? '<span class="badge" style="background:#b91c1c">SAFETY</span>' : '';
