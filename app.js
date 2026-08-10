@@ -1031,7 +1031,7 @@ function openSubmitForm(woId) {
  * TRANSFER WO — oper pekerjaan ke shift berikutnya (antre offline).
  * Jam mulai diambil dari picker Jam Mulai yang sama dengan submit; jam berhenti
  * ditetapkan server saat permintaan benar-benar diterima. Jam sesi ini baru
- * dihitung kalau Planner menyetujui — kalau ditolak, hangus.
+ * dihitung kalau Planner/PIC Lapangan menyetujui — kalau ditolak, hangus.
  */
 function queueTransfer() {
   if (!activeWo) return;
