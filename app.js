@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v82';
+var APP_VERSION = 'v83';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -2289,6 +2289,16 @@ function _kunciTombolPutus() {
 
 function queueApprove(level) {
   if (_sedangPutus) { toast('⏳ Keputusan sedang diproses…'); return; }
+  // Tombol yang ditekan harus cocok dengan tahap WO ini. Penyaring daftar
+  // (tahapSaya) sudah menutup jalurnya, tapi ini jalur uang dan status lokal
+  // bisa hanyut sesaat sesudah keputusan sebelumnya terkirim — tanpa penjaga
+  // ini yang dikirim adalah aksi tahap yang salah, dan jawabannya kartu merah.
+  var _perlu = (level === 1) ? 'pending_supervisor' : 'pending_superintendent';
+  if (String(activeApproval.status) !== _perlu) {
+    closeModal('approveModal'); renderAll();
+    toast('WO ini sudah bukan di tahap itu — menarik data terbaru');
+    syncNow(false); return;
+  }
   // Lapis kedua penjagaan. Tombolnya sudah di-disable, tapi ini jalur uang —
   // satu klik yang lolos berarti WO disetujui dengan angka lama dan override
   // yang sudah diketik hilang tanpa jejak.
@@ -2318,6 +2328,14 @@ function queueReject() {
   if (_sedangPutus) { toast('⏳ Keputusan sedang diproses…'); return; }
   var reason = document.getElementById('aReason').value.trim();
   if (!reason) { toast('Isi alasan reject'); return; }
+  // Sama alasannya dengan queueApprove: `stage` di bawah dibaca dari status
+  // lokal, jadi status yang hanyut mengirim penolakan ke tahap yang salah.
+  var _tahapKini = tahapSaya();
+  if (_tahapKini && String(activeApproval.status) !== _tahapKini) {
+    closeModal('approveModal'); renderAll();
+    toast('WO ini sudah bukan di tahap itu — menarik data terbaru');
+    syncNow(false); return;
+  }
   _kunciTombolPutus();
   var stage = activeApproval.status==='pending_superintendent' ? 'superintendent' : 'supervisor';
   var op = { op_id:uuid(), seq:(_enqSeq++), action:'reject', wo_id:activeApproval.id, wo_number:activeApproval.wo_number,
@@ -3066,6 +3084,29 @@ function queueRejectTransfer(woId, woNumber){
   });
 }
 
+/**
+ * Tahap approval yang menjadi urusan role ini — cerminan `_tahapMilikRole`
+ * di ApiService.gs. Null = bukan approver.
+ *
+ * KENAPA PERLU DI KLIEN JUGA. Server hanya mengirim WO tahap ini, jadi daftar
+ * yang baru ditarik selalu benar. Yang tidak benar adalah SESUDAH sebuah
+ * keputusan berhasil terkirim: _perbaruiStatusLokal() memajukan status salinan
+ * lokal (approve_l1 → pending_superintendent), op-nya berubah 'done' sehingga
+ * tak lagi menyembunyikan kartu, dan renderAll() jalan SEBELUM pullPending()
+ * selesai. Di sela itu kartu yang baru saja di-approve L1 muncul kembali di
+ * layar L1 — kali ini sebagai kartu L2, lengkap dengan tombol Approve L2.
+ * Menekannya dijawab server "Superintendent role required": kartu merah untuk
+ * pekerjaan yang justru BERHASIL. Kebalikannya juga terjadi di layar L2.
+ *
+ * Uang tidak pernah ikut bocor — supervisorApprove/superintendentApprove
+ * memeriksa peran DAN status di server. Yang bocor tampilannya.
+ */
+function tahapSaya() {
+  if (S.role === 'superintendent') return 'pending_superintendent';
+  if (S.role === 'supervisor')     return 'pending_supervisor';
+  return null;
+}
+
 function renderPendingList(){
   // WO yang keputusannya SUDAH diambil dan sedang mengantre kirim tidak
   // ditampilkan lagi. Tanpa penyaringan ini kartunya bisa muncul kembali:
@@ -3084,8 +3125,16 @@ function renderPendingList(){
     if ((o.status === 'queued' || o.status === 'failed_retry') &&
         o.wo_id && OP_KEPUTUSAN.indexOf(o.action) !== -1) opMenunggu[String(o.wo_id)] = true;
   });
-  var daftar = S.pending.filter(function(wo){ return !opMenunggu[String(wo.id)]; });
-  var tertahan = S.pending.length - daftar.length;
+  // Buang dulu kartu yang tahapnya sudah bukan urusan role ini (lihat
+  // tahapSaya()). Ini sisa hanyutan status lokal, BUKAN keputusan yang sedang
+  // dikirim — maka ia tidak boleh ikut dihitung sebagai `tertahan`, supaya
+  // bilah "keputusan sedang dikirim" tidak melaporkan angka yang tidak ada.
+  var _tahap = tahapSaya();
+  var milikSaya = _tahap
+    ? S.pending.filter(function(wo){ return String(wo.status) === _tahap; })
+    : S.pending;
+  var daftar = milikSaya.filter(function(wo){ return !opMenunggu[String(wo.id)]; });
+  var tertahan = milikSaya.length - daftar.length;
 
   if (!daftar.length) {
     return '<div class="empty">Tidak ada WO pending dalam scope Anda.' +
