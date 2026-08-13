@@ -509,6 +509,19 @@
             <div class="sub" style="margin:0">Seluruh unit ditampilkan tanpa saringan. Mengganti unit ikut mengubah <b>unit factor</b>, jadi poinnya berubah.</div>
           </div>
 
+          <!-- ⚠️ JALUR UANG: work_condition → faktor kondisi → poin → rupiah -->
+          <div class="fbox opsional">
+            <label>Kondisi kerja</label>
+            <div class="ovSis">Sekarang: <b id="aOvWcSis">-</b></div>
+            <select class="inp" id="aOvWc" onchange="perbaruiPenjagaOverride()">
+              <option value="">— tidak diubah —</option>
+              <option value="normal">Shift 1</option>
+              <option value="difficult">Shift 2</option>
+              <option value="extreme">Kondisi Ekstrim</option>
+            </select>
+            <div class="sub" style="margin:0">Kondisi kerja adalah <b>pengali poin</b>. Ubah hanya bila kondisi sebenarnya memang berbeda dari yang dicatat.</div>
+          </div>
+
           <div class="fbox opsional">
             <label>Tim mekanik</label>
             <div class="ovSis">Tiap anggota mendapat poin penuh</div>

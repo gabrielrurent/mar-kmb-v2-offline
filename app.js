@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v83';
+var APP_VERSION = 'v84';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -1959,6 +1959,15 @@ function openApproveForm(woId) {
     });
     _uSel.innerHTML = _h;
     if (!_units.length) _uSel.innerHTML = '<option value="">(tekan 🔄 Refresh untuk memuat daftar unit)</option>';
+    var _wSel = document.getElementById('aOvWc');
+    if (_wSel) {
+      // Kosong = 'tidak diubah'. Nilai saat ini ditampilkan terpisah, BUKAN
+      // dipilih otomatis — memilihnya otomatis membuat tiap simpan override
+      // mengirim work_condition walau approver tak menyentuhnya sama sekali.
+      _wSel.value = '';
+      var _wSis = document.getElementById('aOvWcSis');
+      if (_wSis) _wSis.textContent = wcLabel(a.work_condition);
+    }
     var _uSis = document.getElementById('aOvUnitSis');
     if (_uSis) _uSis.textContent = a.unit_name || _now || '-';
   }
@@ -2147,8 +2156,15 @@ function _bacaPerubahanOverride() {
   var uLama = String(activeApproval.unit_id || '');
   var unitChanged = (uBaru !== '' && uBaru !== uLama);
 
+  // Kondisi kerja — jalur uang (faktor kondisi). Kosong = tidak diubah.
+  var wSel = document.getElementById('aOvWc');
+  var wBaru = wSel ? String(wSel.value || '') : '';
+  var wLama = String(activeApproval.work_condition || '');
+  var wcChanged = (wBaru !== '' && wBaru !== wLama);
+
   var bpChanged = (bp !== '');
-  if (!bpChanged && !timeChanged && !teamChanged && !tgtChanged && !jdChanged && !unitChanged) return kosong;
+  if (!bpChanged && !timeChanged && !teamChanged && !tgtChanged && !jdChanged &&
+      !unitChanged && !wcChanged) return kosong;
 
   var payload = { wo_id:activeApproval.id };
   if (bpChanged) payload.base_points = parseFloat(bp);
@@ -2160,6 +2176,7 @@ function _bacaPerubahanOverride() {
   if (teamChanged) payload.team = team;
   if (jdChanged) payload.judgment = jdBaru;
   if (unitChanged) payload.unit_id = uBaru;
+  if (wcChanged) payload.work_condition = wBaru;
   return {payload: payload, ubah: true, salah: ''};
 }
 
@@ -2218,6 +2235,7 @@ function queueOverride() {
     if (payload.target_hours !== undefined) activeApproval.target_hours = payload.target_hours;
     if (payload.start_time) { activeApproval.start_time = payload.start_time; activeApproval.end_time = payload.end_time; }
     if (payload.judgment !== undefined) activeApproval.judgment = payload.judgment;
+    if (payload.work_condition) activeApproval.work_condition = payload.work_condition;
     if (payload.unit_id) {
       activeApproval.unit_id = payload.unit_id;
       var _uu = ((S.refs && S.refs.units) || []).filter(function(u){ return String(u.unit_id) === String(payload.unit_id); })[0];
