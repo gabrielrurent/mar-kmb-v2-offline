@@ -429,6 +429,18 @@
         <button class="mini" onclick="addTeamMember()">+ Tambah Mekanik</button>
       </div>
 
+      <!-- METER UNIT — HM atau KM tergantung section.
+           Ditambahkan 2 Sep 2026. Sebelumnya PWA sama sekali tidak merekam
+           angka meter saat membuat WO, padahal web sudah. Akibatnya setiap WO
+           yang lahir dari HP tidak menyumbang apa-apa untuk umur pakai tyre
+           maupun MTBF unit — dan tak ada satu pun tanda bahwa ia tidak.
+           Label & satuannya berganti sendiri lewat onSectionChangeMeter(). -->
+      <div class="fbox opsional" id="cMeterWrap">
+        <label><span id="cMeterNama">HM</span> Unit (opsional)</label>
+        <input class="inp" id="cMeter" type="number" step="any" min="0" inputmode="decimal" placeholder="cth: 12450">
+        <div class="sub" id="cMeterKaki" style="margin-top:5px"></div>
+      </div>
+
       <div class="fbox opsional">
         <label>Keterangan (opsional)</label>
         <input class="inp" id="cKet" placeholder="cth: unit di pit 3">

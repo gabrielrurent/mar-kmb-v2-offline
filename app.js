@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v84';
+var APP_VERSION = 'v85';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -1148,6 +1148,7 @@ function openCreateForm() {
     document.getElementById('cWc').innerHTML += '<option value="'+esc(wcs[wi].key||wcs[wi].value||wcs[wi])+'">'+esc(wcs[wi].label||wcs[wi])+'</option>';
   }
   document.getElementById('cKet').value='';
+  var _mE=document.getElementById('cMeter'); if(_mE) _mE.value='';
   ['cOthersDesc','cOthersBp','cOthersTh','cOthersUf'].forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
   document.getElementById('cTeamList').innerHTML='';
   S.crossFunc=false; var _cf=document.getElementById('cCrossFunc'); if(_cf) _cf.checked=false;
@@ -1250,8 +1251,40 @@ function onCreateSectionChange() {
     populateCascadeRoot(sec);
   }
   refreshCreateMechanics();
+  setelMeterCreate();
   updateCreatePreview();
 }
+
+/**
+ * Meter mana yang berlaku untuk section yang sedang dipilih.
+ *
+ * Tyreman memakai KILOMETER; field & workshop tetap jam mesin. Bukan sekadar
+ * label: angkanya masuk ke KOLOM yang berbeda di server dan menopang
+ * perhitungan yang berbeda pula — umur pakai tyre di satu sisi, WH/MTBF unit
+ * di sisi lain. Mencampurnya berarti dua satuan dijumlahkan jadi satu angka.
+ */
+function meterCreate() {
+  if (getCreateSection() === 'tyreman') {
+    return {jenis:'km', label:'KM', kunci:'kilometers', contoh:'cth: 84200'};
+  }
+  return {jenis:'hm', label:'HM', kunci:'hour_meter', contoh:'cth: 12450'};
+}
+
+/** Label, contoh isian, dan catatan kaki meter — semuanya dari satu tempat. */
+function setelMeterCreate() {
+  var M = meterCreate();
+  var n = document.getElementById('cMeterNama');
+  if (n) n.textContent = M.label;
+  var i = document.getElementById('cMeter');
+  if (i) i.setAttribute('placeholder', M.contoh);
+  var k = document.getElementById('cMeterKaki');
+  if (k) {
+    k.textContent = (M.jenis === 'km')
+      ? 'Kilometer unit saat pekerjaan ini dimulai. Dipakai menghitung umur pakai tyre.'
+      : 'Hour meter unit saat pekerjaan ini dimulai. Dipakai menghitung MTBF unit.';
+  }
+}
+
 function getCreateSection() {
   var r = document.querySelector('input[name="cSec"]:checked');
   return r ? r.value : 'tyreman';
@@ -1825,6 +1858,16 @@ function _bacaBarisCreate() {
   }
   if (!team.length) return {payload:null, label:'', err:'Tambah minimal 1 mekanik'};
   payload.team = team;
+
+  // Meter unit. Kolom tujuannya mengikuti section — tyreman ke kilometers,
+  // sisanya ke hour_meter. Satu kotak isian di layar, dua kolom di server.
+  // Kosong dibiarkan kosong: server menolak angka yang mundur, tapi tidak
+  // menuntut angka ada. Mekanik yang tak sempat melihat panelnya tetap bisa
+  // membuat WO — start & finish yang tak boleh hilang, bukan ini.
+  var mEl = document.getElementById('cMeter');
+  var mVal = mEl ? String(mEl.value || '').trim() : '';
+  if (mVal !== '') payload[meterCreate().kunci] = mVal;
+
   return {payload: payload, label: label, err: ''};
 }
 
@@ -1854,6 +1897,7 @@ function queueCreate(keepOpen) {
 }
 function resetCreateFieldsForNext(){
   document.getElementById('cKet').value='';
+  var _mE=document.getElementById('cMeter'); if(_mE) _mE.value='';
   ['cOthersDesc','cOthersBp','cOthersTh','cOthersUf'].forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
   var oc=document.getElementById('cOthersCheck'); if(oc) oc.checked=false;
   document.getElementById('cTeamList').innerHTML='';
