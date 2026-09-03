@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v85';
+var APP_VERSION = 'v86';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -1948,6 +1948,13 @@ function openApproveForm(woId) {
     '<div style="margin-top:9px"><b>'+esc(a.component_name||'-')+'</b></div>'+
     '<div class="woInfo">'+
       (a.unit_name ? '<span class="k">Unit</span><span class="v">'+esc(a.unit_name)+'</span>' : '')+
+      // Tanggal DIBUAT berikut jamnya. Approver perlu tahu WO ini sudah berapa
+      // lama menunggu, dan dua WO di hari yang sama tapi beda shift akan tampak
+      // identik kalau jamnya dibuang. Teksnya sudah diformat SERVER
+      // (fmtTanggalJam) — sama persis dengan yang muncul di layar web, supaya
+      // yang membandingkan HP dengan laptop tidak mengira datanya berbeda.
+      (a.created_at_str ? '<span class="k">Dibuat</span><span class="v">'+esc(a.created_at_str)+'</span>' : '')+
+      (a.submitted_at_str ? '<span class="k">Dikirim</span><span class="v">'+esc(a.submitted_at_str)+'</span>' : '')+
       '<span class="k">Lokasi</span><span class="v">'+esc(locLabel(a.location))+'</span>'+
       '<span class="k">Kondisi</span><span class="v">'+esc(wcLabel(a.work_condition))+'</span>'+
       '<span class="k">Waktu kerja</span><span class="v"><b>'+fmtJamMenit(a.actual_hours)+'</b> dari target '+fmtJamMenit(a.target_hours)+
