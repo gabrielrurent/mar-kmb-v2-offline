@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v86';
+var APP_VERSION = 'v87';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -2043,7 +2043,13 @@ function openApproveForm(woId) {
   var _ovB = document.getElementById('ovBody'); if (_ovB) _ovB.style.display = 'none';
   var _ovA = document.getElementById('ovArrow'); if (_ovA) _ovA.textContent = '▸';
   renderOverrideLog(a);
-  aOvRenderTeam(a.team || []);
+  // TIM EFEKTIF, bukan tim asli. Kalau L1 sudah mengubah susunan tim, editor
+  // L2 harus membukanya dengan susunan HASIL L1 — bukan susunan sebelum L1
+  // menyentuhnya. Dulu memakai a.team, dan akibatnya: ringkasan di kartu
+  // menyebut "Tim Mekanik berubah" (ia dibaca dari kolom override) sementara
+  // editornya menampilkan tim lama. L2 menyimpan, dan pekerjaan L1 terhapus
+  // tanpa seorang pun berniat menghapusnya.
+  aOvRenderTeam(a.effective_team || a.team || []);
   document.getElementById('aReason').value='';
   document.getElementById('aRejectSection').style.display='none';
   // Setelah SEMUA isian di-prefill — kalau dijalankan lebih awal, panel terbaca
@@ -2190,7 +2196,12 @@ function _bacaPerubahanOverride() {
     if (seen[mid]) return {payload:null, ubah:true, salah:'Mekanik duplikat di tim override'};
     seen[mid]=true; team.push({mechanic_id:mid, percentage:100}); // KMB full-point
   }
-  var origIds = (activeApproval.team||[]).map(function(t){return String(t.mechanic_id);}).sort().join(',');
+  // Dibandingkan terhadap tim EFEKTIF, sejalan dengan yang ditampilkan editor.
+  // Kalau pembandingnya tim asli, L2 yang membuka lalu menutup tanpa mengubah
+  // apa pun akan terbaca "berubah" — dan override L1 ikut tertulis ulang atas
+  // nama L2.
+  var _timAcuan = activeApproval.effective_team || activeApproval.team || [];
+  var origIds = _timAcuan.map(function(t){return String(t.mechanic_id);}).sort().join(',');
   var newIds = team.map(function(t){return String(t.mechanic_id);}).sort().join(',');
   var teamChanged = (newIds !== origIds);
   if (teamChanged && team.length===0) return {payload:null, ubah:true, salah:'Tim override minimal 1 mekanik'};
@@ -2294,12 +2305,19 @@ function queueOverride() {
     }
     if (payload.team) {
       var mechs = (S.refs && S.refs.mechanics) || [];
-      activeApproval.team = payload.team.map(function(t) {
+      var _timBaru = payload.team.map(function(t) {
         var nm = t.mechanic_id;
         for (var m=0;m<mechs.length;m++) if (String(mechs[m].mechanic_id)===String(t.mechanic_id)) { nm = mechs[m].mechanic_name; break; }
         return {mechanic_id: t.mechanic_id, name: nm};
       });
-      document.getElementById('aTeam').textContent = 'Tim: '+activeApproval.team.map(function(t){return t.name;}).join(', ');
+      // effective_team IKUT diperbarui, bukan cuma team. Editor membaca
+      // effective_team; kalau hanya team yang disegarkan, membuka kembali
+      // panel override tanpa menarik ulang data akan memperlihatkan susunan
+      // SEBELUM simpan barusan — dan menyimpan lagi akan mengembalikannya.
+      activeApproval.team = _timBaru;
+      activeApproval.effective_team = _timBaru;
+      activeApproval.effective_team_source = 'superintendent';
+      document.getElementById('aTeam').textContent = 'Tim: '+_timBaru.map(function(t){return t.name;}).join(', ');
     }
     document.getElementById('aOvBp').value = '';   // sudah masuk base_points di atas
     perbaruiPenjagaOverride();
