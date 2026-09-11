@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v87';
+var APP_VERSION = 'v88';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -1270,8 +1270,30 @@ function meterCreate() {
   return {jenis:'hm', label:'HM', kunci:'hour_meter', contoh:'cth: 12450'};
 }
 
+/**
+ * MEDAN "HM/KM UNIT" DI LAYAR BUAT WO — disembunyikan (keputusan Gabriel,
+ * 11 Sep 2026). 1:1 dengan TAMPILKAN_METER_BUAT_WO di Constants.gs; kalau
+ * dinyalakan lagi di sana, nyalakan juga di sini.
+ *
+ * Yang disembunyikan HANYA yang di layar BUAT WO. Isian meter milik MEKANIK
+ * saat mengirim pekerjaannya TIDAK tersentuh — itu sumber data Koreksi HM/KM.
+ */
+var TAMPIL_METER_BUAT_WO = false;
+
 /** Label, contoh isian, dan catatan kaki meter — semuanya dari satu tempat. */
 function setelMeterCreate() {
+  // DIBUANG DARI DOM, bukan disembunyikan dengan CSS.
+  //
+  // Bekas luka: `kilometers` pernah terhapus pada SETIAP kiriman karena
+  // medannya disembunyikan secara tampilan sementara kodenya tetap membaca
+  // lalu menuliskan nilai kosongnya. Medan yang tidak ada tidak bisa salah
+  // dibaca — getElementById mengembalikan null, dan semua pembacanya di
+  // berkas ini sudah berjaga terhadap null.
+  if (!TAMPIL_METER_BUAT_WO) {
+    var _w = document.getElementById('cMeterWrap');
+    if (_w && _w.parentNode) _w.parentNode.removeChild(_w);
+    return;
+  }
   var M = meterCreate();
   var n = document.getElementById('cMeterNama');
   if (n) n.textContent = M.label;
@@ -3351,6 +3373,11 @@ openDb().then(function() {
     });
     window.addEventListener('online', cekPembaruan);
   }
+  // Medan meter dibuang SAAT MUAT, bukan menunggu handler section. Kalau
+  // hanya dibuang di sana, layar Buat WO yang terbuka lebih dulu sempat
+  // memperlihatkannya — berkedip sebentar lalu hilang, yang terbaca sebagai
+  // aplikasi rusak, bukan sebagai medan yang memang ditiadakan.
+  setelMeterCreate();
   syncVersionFromCache().then(function(){ showScreen(S.token?'main':'login'); renderAll(); });
   showScreen(S.token?'main':'login');
   // Timer bisa masih berjalan dari sesi sebelumnya (state tersimpan di IndexedDB)
