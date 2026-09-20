@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v88';
+var APP_VERSION = 'v89';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -2841,6 +2841,22 @@ function _kartuWo(daftar, opByWo, totalGrup, kirimGrup) {
         '<div class="cardBody"><b>'+esc(wo.component_name||'-')+'</b>'+(wo.unit_name?' · '+esc(wo.unit_name):'')+(wo.target_hours?' · Target: '+fmtJamMenit(wo.target_hours):'')+
         (banyak ? '' : '<br>📍 '+esc(locLabel(wo.location))+' · Kondisi: '+esc(wcLabel(wo.work_condition))+timKerjaStr(wo.team))+'</div>'+
         (wo.keterangan?'<div class="ket">📝 '+esc(wo.keterangan)+'</div>':'')+
+        // Kapan dikirim & kapan disahkan L2. Muncul hanya bila ada isinya, jadi
+        // WO yang belum dikirim tak dipenuhi baris kosong — dan kartu "Disetujui"
+        // akhirnya bisa menjawab "kapan?", pertanyaan yang selalu muncul saat
+        // gaji terasa telat.
+        //
+        // Teksnya datang JADI dari server (submitted_at_str / disahkan_at_str).
+        // Sengaja tidak diformat di sini: HP yang zona waktunya berbeda akan
+        // menampilkan jam lain untuk WO yang sama, dan mekanik akan yakin salah
+        // satu layar berbohong. 1:1 dengan kartu di web.
+        ((wo.submitted_at_str || wo.disahkan_at_str)
+          ? '<div class="ket">'+
+              (wo.submitted_at_str ? '📮 Dikirim: '+esc(wo.submitted_at_str) : '')+
+              (wo.submitted_at_str && wo.disahkan_at_str ? '<br>' : '')+
+              (wo.disahkan_at_str ? '✅ Disahkan: '+esc(wo.disahkan_at_str) : '')+
+            '</div>'
+          : '')+
         // Tiap baris punya timer, Isi Manual, Kirim, dan Transfer sendiri —
         // karena tiap baris memang WO utuh di server.
         (canFill?_timerControls(wo):'')+
