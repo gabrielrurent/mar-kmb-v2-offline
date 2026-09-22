@@ -122,9 +122,32 @@ function getMechanicByOfflineToken(token) {
 }
 ```
 
-### Langkah 4: Pastikan PWA mengarah ke URL Deployment Baru
-Di file `mar-offline/app.js` pada repositori frontend Anda, pastikan `CONFIG.API_URL` sudah mengarah ke URL deployment terbaru yang telah diset ke akses "Anyone":
-```javascript
-var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwuNYOiQ6-h5otm6KzLrIW2lDITak4XRbfrhL5DL2b2QE4TBMaH090dl1JjoCvcMHe-Vw/exec' };
-```
-Jangan lupa menaikkan versi cache di `sw.js` (misal ke `mar-v9`) agar browser pengguna memperbarui file `app.js` secara otomatis.
+### Langkah 4: Pastikan PWA mengarah ke deployment yang benar
+
+> ⚠️ **URL deployment SENGAJA tidak ditulis di dokumen ini.**
+>
+> Sampai 22 Sep 2026 bagian ini memuat URL-nya secara harfiah — dan URL itu
+> sudah usang berbulan-bulan. Siapa pun yang mengikutinya akan mengarahkan PWA
+> ke deployment yang beku: mekanik tetap bisa login, tetap bisa mengirim, dan
+> tidak ada satu pun galat yang muncul. Pekerjaannya cuma masuk ke sistem yang
+> salah, dan tak ada yang tahu sampai gajinya tidak tercatat.
+>
+> Nilai yang berlaku hidup di **satu** tempat: `CONFIG.API_URL`, baris awal
+> `app.js`. Baca dari sana. Jangan menyalinnya ke dokumen mana pun — salinan
+> kedua pasti menyimpang suatu hari, dan dokumenlah yang lebih sering dibaca
+> orang yang baru bergabung.
+
+**Jangan pernah membuat deployment baru.** URL-nya tertanam di `CONFIG.API_URL`
+dan di setiap tautan bertoken yang sudah dipegang mekanik. Deployment baru
+berarti URL baru: aplikasi lama tetap jalan, tetap menerima pekerjaan, dan
+diam-diam menulis ke tempat yang sudah ditinggalkan. Perbarui deployment yang
+**sudah ada** dengan `--deploymentId` yang sama.
+
+Setelah mengubah `app.js`, naikkan **DUA** nomor versi sekaligus:
+
+- `APP_VERSION` di `app.js`
+- `CACHE` di `sw.js`
+
+Keduanya, bukan salah satu. Pernah terjadi `APP_VERSION` tertinggal di v26
+sementara `CACHE` sudah v34 — peramban memuat kode baru di atas cache lama, dan
+gejalanya membingungkan berhari-hari sebelum ketahuan sebabnya.
