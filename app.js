@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v89';
+var APP_VERSION = 'v90';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -547,7 +547,24 @@ function showSendProgress(idx, total, op) {
 function api(action,data,opId) {
   var body = JSON.stringify({token:S.token, action:action, data:data||{}, op_id:opId||undefined});
   return fetch(CONFIG.API_URL, {method:'POST', headers:{'Content-Type':'text/plain'}, body:body})
-    .then(function(r){return r.json();});
+    // Dibaca sebagai TEKS dulu, bukan r.json(), supaya jawaban maintenance bisa
+    // dikenali. Server sengaja menjawab aksi tulis selama maintenance dengan
+    // teks "MAINTENANCE|<jam selesai>|<pesan>" — BUKAN JSON — sehingga versi
+    // PWA lama memperlakukannya seperti sinyal putus dan MENYIMPAN kiriman di
+    // antrean. Versi ini mengenalinya dan memberi tahu pemakai dengan jujur.
+    // Untuk jawaban lain, JSON.parse(teks) setara persis dengan r.json():
+    // sama-sama melempar SyntaxError bila bukan JSON. (Dari SUM v43, 2 Okt 2026.)
+    .then(function(r){return r.text();})
+    .then(function(t){
+      if (String(t).indexOf('MAINTENANCE|') === 0) {
+        var bagian = String(t).split('|');
+        var em = new Error('maintenance');
+        em.maintenance = true;
+        em.sampai = bagian[1] || '';
+        throw em;
+      }
+      return JSON.parse(t);
+    });
 }
 
 /* ── Install PWA: tombol 1-tap via beforeinstallprompt ── */
@@ -687,7 +704,15 @@ function syncNow(manual) {
     // awal berarti menghakimi memakai salinan lama.
     .then(function() { return _rekonsiliasiGagal(); })
     .then(function() { S.lastSync = new Date().toISOString(); subscribePush(); return kvSet('last_sync',S.lastSync); })
-    .catch(function(e) { requestBgSync(); toast('⚠️ Sync gagal: '+e.message); })
+    .catch(function(e) {
+      requestBgSync();
+      // Maintenance: pull SENGAJA ikut terlewat (flushOutbox melempar lebih dulu).
+      // Itu menguntungkan — HP dengan kiriman tertahan tidak menambah bacaan
+      // berat ke server selama jendela maintenance. HP tanpa kiriman tertahan
+      // tetap menarik data seperti biasa.
+      if (e && e.maintenance) toast(pesanMaintenance(e), 9000);
+      else toast('⚠️ Sync gagal: '+e.message);
+    })
     .then(function() { S.syncing = false; return refreshOutbox(); })
     .then(function() {
       renderAll();
@@ -877,7 +902,12 @@ function flushOutbox() {
           else { it.status='failed'; it.error=(typeof r.error==='string')?r.error:JSON.stringify(r.error); }
           // Perbarui tampilan tiap item selesai — antrean panjang tidak terlihat macet.
           return obPut(it).then(function(){ return refreshOutbox(); }).then(function(){ renderAll(); });
-        }).catch(function() { return obPut(it).then(function(){throw new Error('koneksi terputus');}); });
+        }).catch(function(e) {
+          // Status kiriman TIDAK diubah — tetap di antrean, dikirim ulang nanti.
+          // Galat maintenance diteruskan apa adanya supaya syncNow bisa
+          // menampilkan pesan yang jujur, bukan "koneksi terputus".
+          return obPut(it).then(function(){ throw (e && e.maintenance) ? e : new Error('koneksi terputus'); });
+        });
       });
     });
     return chain.then(function(){ return sent; });
@@ -2531,9 +2561,23 @@ function showScreen(nm) {
   document.getElementById('screen-main').style.display = nm==='main'?'block':'none';
 }
 function esc(s) { return String(s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
-function toast(msg) {
+function toast(msg, ms) {
   var t=document.getElementById('toast'); t.textContent=msg; t.style.display='block';
-  clearTimeout(t._h); t._h=setTimeout(function(){t.style.display='none';},3500);
+  clearTimeout(t._h); t._h=setTimeout(function(){t.style.display='none';}, ms || 3500);
+}
+/**
+ * Pesan saat server dalam maintenance. Tegas soal satu hal: kiriman TIDAK
+ * hilang. Mekanik yang mengira kirimannya hilang bisa mengisi ulang (WO jadi
+ * dua) atau menghapus data aplikasi (antreannya ikut terhapus). Jamnya jam HP
+ * itu sendiri — yang memang dilihat pemakainya.
+ */
+function pesanMaintenance(e) {
+  var jam = '';
+  try {
+    var d = new Date(e && e.sampai);
+    if (!isNaN(d.getTime())) jam = ' sampai pukul ' + ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+  } catch (x) {}
+  return '🛠️ Server sedang maintenance' + jam + '. Kiriman Anda TERSIMPAN di HP dan akan terkirim otomatis — tidak perlu diisi ulang.';
 }
 function toggleOutboxDetail(){ S.showOutbox = !S.showOutbox; renderAll(); }
 function opLabel(o){
