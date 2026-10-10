@@ -9,7 +9,7 @@ var CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycbwlwlQvOGVF6FdK
 // service worker yang benar-benar aktif (lihat syncVersionFromCache).
 // Dengan begitu rilis cukup mengubah CACHE di sw.js; angka di sini tak bisa lagi
 // tertinggal diam-diam seperti dulu (APP_VERSION v26 vs CACHE v34).
-var APP_VERSION = 'v90';
+var APP_VERSION = 'v91';
 
 // ── Pembaruan versi otomatis ────────────────────────────────────────────────
 // sw.js sudah skipWaiting()+clients.claim(), jadi versi baru mengambil alih
@@ -376,6 +376,20 @@ function fHitungDurasi() {
 }
 
 /** Satu-satunya cara sah menulis nilai picker. `s` = "YYYY-MM-DDTHH:MM" atau ''. */
+/**
+ * Batasi tanggal paling awal di picker (Kadaluwarsa.gs: batas mundur).
+ * KEMBAR dtMin di DateTime24.html. Tanggal LOKAL, bukan potongan ISO — ISO
+ * dari server dalam UTC dan memotongnya bisa menggeser batas sehari.
+ */
+function dtMin(id, iso) {
+  var g = document.querySelector('.dt24[data-dt="'+id+'"]');
+  if (!g) return;
+  var t = g.querySelector('.dtTgl');
+  if (!iso) { t.removeAttribute('min'); return; }
+  var d = new Date(iso);
+  if (isNaN(d.getTime())) { t.removeAttribute('min'); return; }
+  t.setAttribute('min', d.getFullYear()+'-'+_dt2(d.getMonth()+1)+'-'+_dt2(d.getDate()));
+}
 function dtSet(id, s) {
   var el = document.getElementById(id);
   if (!el) return;
@@ -1037,6 +1051,7 @@ function openSubmitForm(woId) {
   activeWo = null;
   for (var i=0;i<S.wos.length;i++) if (String(S.wos[i].id)===String(woId)) activeWo=S.wos[i];
   if (!activeWo) return;
+  if (woTerkunci(activeWo)) { toast('⏰ WO ini terkunci (lewat 24 jam). Laporkan ke L2 untuk dibuka kembali.'); activeWo = null; renderAll(); return; }
   document.getElementById('fTitle').textContent = activeWo.wo_number;
   document.getElementById('fDesc').innerHTML = '<b>'+esc(activeWo.component_name||'')+'</b>'+(activeWo.unit_name?' · '+esc(activeWo.unit_name):'')+
     '<br>📍 '+esc(locLabel(activeWo.location))+' · Kondisi: '+esc(wcLabel(activeWo.work_condition))+
@@ -1044,6 +1059,14 @@ function openSubmitForm(woId) {
   document.getElementById('fKet').textContent = activeWo.keterangan ? '📝 '+activeWo.keterangan : '';
   document.getElementById('fKet').style.display = activeWo.keterangan ? 'block' : 'none';
   dtSet('fStart',''); dtSet('fEnd',''); fHitungDurasi();
+  // Batas mundur: picker tak bisa mundur melewati batas, dan alasannya ditulis.
+  dtMin('fStart', activeWo.batas_mundur_at || '');
+  var _mn = document.getElementById('fMundurNote');
+  if (_mn) {
+    if (activeWo.batas_mundur_at) { _mn.textContent = '📅 Jam mulai paling awal: '+activeWo.batas_mundur_str+' (24 jam sebelum WO dibuat). Pekerjaan yang lebih lama hanya bisa dicatat lewat WO yang dibuat L2.'; _mn.style.display='block'; }
+    else if (activeWo.mundur_bebas) { _mn.textContent = '📅 WO buatan L2 — boleh mencatat pekerjaan lebih dari 24 jam ke belakang.'; _mn.style.display='block'; }
+    else { _mn.textContent = ''; _mn.style.display='none'; }
+  }
   document.getElementById('fHm').value=''; document.getElementById('fKm').value='';
   document.getElementById('fPart').value='';
   // Tyreman: sembunyikan pilihan spare part (nilainya sudah dikosongkan di atas)
@@ -1086,15 +1109,62 @@ function queueTransfer() {
  * validasi dan salah satunya lolos mengirim jam yang tak masuk akal.
  */
 function _antreSubmit(wo, startISO, endISO, hm, km, part) {
+  // Penjaga kadaluwarsa & batas mundur. Promise, BUKAN return kosong:
+  // kirimLangsung merangkai .then() pada hasil fungsi ini.
+  var _salah = _salahKirim(wo, startISO);
+  if (_salah) { toast(_salah); renderAll(); return Promise.resolve(); }
+  var _kini = new Date().toISOString();
   var op = { op_id:uuid(), seq:(_enqSeq++), action:'submit_work', wo_id:wo.id, wo_number:wo.wo_number,
-    payload:{wo_id:wo.id, start_time:startISO, end_time:endISO, hour_meter:hm||'', kilometers:km||'', part_category:part||''},
-    status:'queued', created_at:new Date().toISOString() };
+    // diisi_at = saat tombol ditekan. Server menilai kadaluwarsa dari sini,
+    // bukan dari kapan kiriman sampai — kiriman offline tetap sah.
+    payload:{wo_id:wo.id, start_time:startISO, end_time:endISO, hour_meter:hm||'', kilometers:km||'', part_category:part||'', diisi_at:_kini},
+    status:'queued', created_at:_kini };
   return obPut(op).then(refreshOutbox).then(function() {
     clearTimerAfterSubmit(op.wo_id);   // timer baru dibersihkan setelah masuk antrean
     closeModal('submitModal'); renderAll();
     toast(navigator.onLine?'📮 Mengirim...':'📮 Tersimpan! Terkirim saat ada sinyal');
     syncNow(false);
   });
+}
+
+/* ═══ KADALUWARSA & BATAS MUNDUR (Kadaluwarsa.gs, 10 Okt 2026) ══════════════
+ * Server mengirim JAM BATAS-nya (batas_kerja_at); HP hanya membandingkannya
+ * dengan jamnya sendiri — rumusnya hidup di satu tempat, di server. Kunci
+ * dinilai SAAT MEKANIK BERTINDAK: kiriman yang ditekan sebelum batas tetap sah
+ * walau sinyalnya baru ada besok, karena diisi_at ikut terkirim. */
+function woBatasLewat(wo) { return !!(wo && wo.batas_kerja_at) && Date.now() >= new Date(wo.batas_kerja_at).getTime(); }
+function woTerkunci(wo) { return !!(wo && (wo.is_reported_expired === true || woBatasLewat(wo))); }
+function kunciKartuHtml(wo, opLapor) {
+  var antre = !!(opLapor && opLapor.status === 'queued');
+  if (wo.is_reported_expired === true || antre) {
+    return '<div class="ket kdlNote kdlLapor">⏰ '+(antre
+      ? 'Laporan ke L2 tersimpan — terkirim saat ada sinyal.' : 'Sudah dilaporkan ke L2 — tunggu L2 membuka kuncinya.')+'</div>';
+  }
+  return '<div class="ket kdlNote">⏰ Terkunci sejak '+esc(wo.batas_kerja_str||'')+' — WO tidak dikirim dalam 24 jam. Laporkan ke L2 untuk dibuka kembali.</div>'+
+    '<button class="big" style="background:#dc2626" onclick="queueReportExpired(\''+esc(String(wo.id))+'\')">⚠️ Laporkan ke L2</button>';
+}
+/** Mekanik melaporkan WO kadaluwarsa ke L2 — lewat antrean, seperti aksi tulis lain. */
+function queueReportExpired(woId) {
+  var wo = null;
+  for (var i=0;i<S.wos.length;i++) if (String(S.wos[i].id)===String(woId)) wo = S.wos[i];
+  if (!wo) return;
+  if (!confirm('Laporkan WO '+wo.wo_number+' ke L2?\n\nL2 akan membuka kuncinya, dan Anda mendapat 24 jam lagi untuk mengirimnya.')) return;
+  var op = { op_id:uuid(), seq:(_enqSeq++), action:'report_expired', wo_id:wo.id, wo_number:wo.wo_number,
+    payload:{wo_id:wo.id}, status:'queued', created_at:new Date().toISOString(), label:'Lapor Expired · '+wo.wo_number };
+  wo.is_reported_expired = true;
+  obPut(op).then(function(){ return kvSet('wos', S.wos); }).then(refreshOutbox).then(function() {
+    renderAll();
+    toast(navigator.onLine ? '📮 Melaporkan ke L2...' : '📮 Laporan tersimpan — terkirim saat ada sinyal');
+    syncNow(false);
+  });
+}
+/** Tolak isian yang melewati aturan — dipakai _antreSubmit, satu-satunya jalur antre kirim. */
+function _salahKirim(wo, startISO) {
+  if (woTerkunci(wo)) return '⏰ WO ini terkunci (lewat 24 jam). Laporkan ke L2 untuk dibuka kembali.';
+  if (wo.batas_mundur_at && new Date(startISO).getTime() < new Date(wo.batas_mundur_at).getTime()) {
+    return '📅 Jam mulai paling awal '+wo.batas_mundur_str+'. Pekerjaan yang lebih lama hanya bisa dicatat lewat WO yang dibuat L2.';
+  }
+  return '';
 }
 
 function queueSubmit() {
@@ -2035,6 +2105,16 @@ function openApproveForm(woId) {
   document.getElementById('aOvTgtMenit').value = _th ? Math.round((_th - Math.floor(_th)) * 60) : '';
   dtSet('aOvStart', toDtLocal(a.start_time));
   dtSet('aOvEnd', toDtLocal(a.end_time));
+  // Batas mundur (Kadaluwarsa.gs): L1 tak bisa memundurkan jam mulai melewati
+  // batas — kalau bisa, override L1 jadi jalan memutar. L2 bebas.
+  var _ovMn = document.getElementById('aOvMundurNote');
+  if (S.role === 'supervisor' && a.batas_mundur_at) {
+    dtMin('aOvStart', a.batas_mundur_at);
+    if (_ovMn) { _ovMn.textContent = '📅 Jam mulai paling awal: '+a.batas_mundur_str+'. Memundurkan lebih jauh hanya bisa L2.'; _ovMn.style.display='block'; }
+  } else {
+    dtMin('aOvStart', '');
+    if (_ovMn) { _ovMn.textContent = ''; _ovMn.style.display='none'; }
+  }
   // Nilai SISTEM ditulis terang di tiap kotak override — tanpa itu approver
   // tak tahu angka apa yang sedang dia timpa, dan itu jalur uang.
   var _actNow = document.getElementById('aOvActualNow');
@@ -2228,6 +2308,10 @@ function _bacaPerubahanOverride() {
   var ovE = document.getElementById('aOvEnd').value;
   if ((ovS && !ovE) || (!ovS && ovE)) return {payload:null, ubah:true, salah:'Isi waktu Mulai DAN Selesai'};
   if (ovS && ovE && new Date(ovE).getTime() <= new Date(ovS).getTime()) return {payload:null, ubah:true, salah:'Waktu selesai harus setelah mulai'};
+  if (S.role === 'supervisor' && activeApproval && activeApproval.batas_mundur_at && ovS &&
+      new Date(ovS).getTime() < new Date(activeApproval.batas_mundur_at).getTime()) {
+    return {payload:null, ubah:true, salah:'Jam mulai paling awal '+activeApproval.batas_mundur_str+' — memundurkan lebih jauh hanya bisa L2'};
+  }
 
   var timeChanged = false;
   if (ovS && ovE) {
@@ -2581,7 +2665,7 @@ function pesanMaintenance(e) {
 }
 function toggleOutboxDetail(){ S.showOutbox = !S.showOutbox; renderAll(); }
 function opLabel(o){
-  var names = {submit_work:'Submit', create_wo:'Buat WO', approve_l1:'L1', approve_l2:'L2', reject:'Reject',
+  var names = {submit_work:'Submit', create_wo:'Buat WO', approve_l1:'L1', approve_l2:'L2', reject:'Reject', report_expired:'Lapor Expired', reopen_expired:'Buka Kunci',
                cancel_wo:'Batal WO', request_transfer:'Transfer WO', save_override:'Override',
                approve_transfer:'Setujui Transfer', reject_transfer:'Tolak Transfer'};
   var base = o.label || names[o.action] || o.action;
@@ -2675,33 +2759,145 @@ function renderAll() {
 
 /* ── MONITORING (approver) — cermin halaman Monitoring di web ──
    Menampilkan TOKEN mekanik, bukan URL, sama seperti web sejak 1 Agu 2026. */
+/* ═══ MONITORING BISA DIKLIK (10 Okt 2026, port SUM V2) ════════════════════
+ * Ubin → daftar WO di baliknya → detail. Satu sumber dengan web
+ * (getMonitoringDaftar / getMonitoringDetailWo): angka ubin dan isi daftar
+ * dihitung fungsi yang sama di server. Daftar & detail butuh sinyal; ubinnya
+ * tetap terbaca dari data tarikan terakhir. */
+var MON = null;   // null = ubin; {kat, data?, memuat?, detail?, memuatDetail?}
+function monBuka(kat) {
+  if (!navigator.onLine) { toast('📴 Daftar butuh sinyal — angka di ubin dari tarikan terakhir'); return; }
+  MON = {kat: kat, memuat: true}; renderAll();
+  api('pull_monitoring_daftar', {kategori: kat}).then(function(r) {
+    if (!MON || MON.kat !== kat) return;
+    if (!r || !r.success) { toast('❌ '+((r && r.error) || 'Gagal memuat daftar')); MON = null; renderAll(); return; }
+    MON = {kat: kat, data: r.result}; renderAll();
+  }).catch(function(e) { toast((e && e.maintenance) ? pesanMaintenance(e) : '⚠️ Sambungan terputus — coba lagi'); MON = null; renderAll(); });
+}
+function monDetail(id) {
+  if (!MON || !MON.data) return;
+  if (!navigator.onLine) { toast('📴 Detail butuh sinyal'); return; }
+  MON.memuatDetail = true; MON.detail = null; renderAll();
+  api('pull_wo_detail', {wo_id: id}).then(function(r) {
+    if (!MON) return;
+    MON.memuatDetail = false;
+    if (!r || !r.success) { toast('❌ '+((r && r.error) || 'Gagal memuat detail')); renderAll(); return; }
+    MON.detail = r.result; renderAll();
+  }).catch(function() { if (MON) MON.memuatDetail = false; toast('⚠️ Sambungan terputus — coba lagi'); renderAll(); });
+}
+function monKembali() { if (MON && (MON.detail || MON.memuatDetail)) { MON.detail = null; MON.memuatDetail = false; } else { MON = null; } renderAll(); }
+function bukaExpiredDariApproval() { S.tab = 'monitor'; renderAll(); monBuka('expired'); }
+/** L2 membuka kunci — lewat antrean seperti aksi tulis lain; peran diperiksa server. */
+function monBukaKunci(id, nomor) {
+  if (!confirm('Buka kunci WO '+nomor+'?\n\nMekanik mendapat 24 jam lagi untuk mengisi & mengirimnya.')) return;
+  var op = { op_id:uuid(), seq:(_enqSeq++), action:'reopen_expired', wo_id:id, wo_number:nomor,
+    payload:{wo_id:id}, status:'queued', created_at:new Date().toISOString(), label:'Buka Kunci · '+nomor };
+  obPut(op).then(refreshOutbox).then(function() {
+    // Tandai di daftar yang sedang terbuka — supaya tombolnya tak ditekan dua kali.
+    if (MON && MON.data) MON.data.items.forEach(function(it){ if (String(it.id)===String(id)) { it.boleh_buka = false; it.sedang_dibuka = true; } });
+    if (MON && MON.detail && String(MON.detail.id)===String(id)) { MON.detail.boleh_buka = false; MON.detail.sedang_dibuka = true; }
+    renderAll();
+    toast(navigator.onLine ? '🔓 Membuka kunci...' : '🔓 Tersimpan — terkirim saat ada sinyal');
+    syncNow(false);
+  });
+}
+function monTgl(iso) {
+  if (!iso) return '-';
+  var d = new Date(iso); if (isNaN(d.getTime())) return '-';
+  var b = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
+  return _dt2(d.getDate())+' '+b[d.getMonth()]+' '+d.getFullYear()+' '+_dt2(d.getHours())+':'+_dt2(d.getMinutes());
+}
+function monBaris(l, v) { return (v === '' || v == null) ? '' : '<div class="monBaris"><span>'+esc(l)+'</span><span>'+v+'</span></div>'; }
+function renderMonDaftar(el) {
+  var d = MON.data;
+  var h = '<button class="mini" onclick="monKembali()">← Ringkasan</button>'+
+    '<div class="card" style="margin-top:8px"><b>'+esc(d.judul)+' — '+d.total+'</b>'+(d.periode?' <span class="badge" style="background:#0f766e">'+esc(d.periode)+'</span>':'')+
+    (d.total > d.ditampilkan ? '<div class="sub">Menampilkan '+d.ditampilkan+' terbaru dari '+d.total+'.</div>' : '')+'</div>';
+  if (!d.items.length) h += '<div class="empty">Tidak ada WO di sini.</div>';
+  d.items.forEach(function(it) {
+    var chip = '<span class="badge" style="background:#475569">'+esc(it.status_label||it.status)+'</span>'+
+      (it.dilaporkan ? '<span class="badge" style="background:#dc2626">📣 Dilaporkan</span>' : '')+
+      (it.dibuka_ulang ? '<span class="badge" style="background:#0369a1">🔓 Pernah dibuka</span>' : '')+
+      (it.sedang_dibuka ? '<span class="badge" style="background:#15803d">🔓 Dibuka…</span>' : '');
+    var sub = esc(it.unit_name)+(it.section?' · '+esc(it.section):'')+'<br>👥 '+esc((it.team_names||[]).join(', ')||'-');
+    if (d.kategori==='expired') sub += '<br>⏰ Terkunci sejak '+monTgl(it.batas_kerja_at);
+    else if (d.kategori==='belum') sub += '<br>📅 Dibuat '+monTgl(it.created_at)+(it.batas_kerja_at?' · batas kirim '+monTgl(it.batas_kerja_at):'');
+    else if (d.kategori==='l1') sub += '<br>📮 Dikirim '+monTgl(it.submitted_at);
+    else if (d.kategori==='l2') sub += '<br>✅ L1 '+esc(it.l1_name||'-')+' · '+monTgl(it.l1_at);
+    else if (d.kategori==='approved') sub += '<br>✅ Disahkan '+monTgl(it.l2_at)+' · '+(it.final_points||0)+' poin';
+    h += '<div class="card" style="cursor:pointer" onclick="monDetail(\''+esc(String(it.id))+'\')">'+
+      '<div class="cardTop"><b>'+esc(it.wo_number)+'</b>'+chip+'</div>'+
+      '<div class="cardBody"><b>'+esc(it.component_name)+'</b><br>'+sub+'</div>'+
+      (it.boleh_buka ? '<button class="big" style="background:#dc2626;margin-top:8px" onclick="event.stopPropagation();monBukaKunci(\''+esc(String(it.id))+'\',\''+esc(String(it.wo_number))+'\')">🔓 Buka Kunci</button>' : '')+
+    '</div>';
+  });
+  el.innerHTML = h;
+}
+function renderMonDetail(el) {
+  var k = MON.detail;
+  var h = '<button class="mini" onclick="monKembali()">← Daftar</button>'+
+    '<div class="card" style="margin-top:8px"><div class="cardTop"><b>'+esc(k.wo_number||'Detail WO')+'</b>'+
+    '<span class="badge" style="background:#475569">'+esc(k.status_label||'')+'</span>'+
+    (k.is_expired?'<span class="badge" style="background:#dc2626">⏰ Expired</span>':'')+
+    (k.is_reported_expired?'<span class="badge" style="background:#ea580c">📣 Dilaporkan</span>':'')+
+    (k.di_arsip?'<span class="badge" style="background:#64748b">Arsip</span>':'')+'</div>';
+  if (k.boleh_buka) h += '<button class="big" style="background:#dc2626" onclick="monBukaKunci(\''+esc(String(k.id))+'\',\''+esc(String(k.wo_number))+'\')">🔓 Buka Kunci — beri 24 jam lagi</button>';
+  if (k.sedang_dibuka) h += '<div class="sub" style="color:#15803d;font-weight:700">🔓 Permintaan buka kunci sudah di antrean.</div>';
+  h += '<div class="monSek">Pekerjaan</div>'+
+    monBaris('Pekerjaan', esc(k.component && k.component.component_name))+
+    monBaris('Unit', esc(k.unit && k.unit.unit_name))+
+    monBaris('Lokasi', esc(locLabel(k.location)))+
+    monBaris('Kondisi', esc(wcLabel(k.work_condition)))+
+    monBaris('Tim', esc((k.effective_team||k.team||[]).map(function(m){ return m.mechanic_name||m.mechanic_id; }).join(', ')))+
+    (k.keterangan ? monBaris('Keterangan', esc(k.keterangan)) : '');
+  h += '<div class="monSek">Waktu</div>'+
+    monBaris('Dibuat', esc(k.created_by_name||'-')+' · '+esc(k.created_at_str||monTgl(k.created_at)))+
+    (k.batas_kerja_at ? monBaris('Batas kirim', monTgl(k.batas_kerja_at)+(k.reopened_at?' (dibuka ulang '+monTgl(k.reopened_at)+')':'')) : '')+
+    (k.submitted_at ? monBaris('Dikirim', monTgl(k.submitted_at)) : '')+
+    (k.start_time ? monBaris('Jam kerja', monTgl(k.start_time)+' → '+monTgl(k.end_time)+(k.actual_hours?' ('+esc(k.actual_hours)+' jam)':'')) : '')+
+    (k.timeliness ? monBaris('Ketepatan', esc(k.timeliness.label)+' · '+esc(k.timeliness.ratio_percent)+'%') : '')+
+    ((k.l1_name||k.l1_at) ? monBaris('Disetujui L1', esc(k.l1_name||'-')+' · '+monTgl(k.l1_at)) : '')+
+    ((k.l2_name||k.l2_at) ? monBaris('Disahkan L2', esc(k.l2_name||'-')+' · '+monTgl(k.l2_at)) : '');
+  if (k.final_points !== null && k.final_points !== undefined) h += '<div class="monSek">Hasil</div>'+monBaris('Poin akhir', esc(k.final_points));
+  (k.poin_terbit||[]).forEach(function(p){ h += monBaris(p.nama, esc(p.poin)+' poin · Rp '+String(Math.round(p.rupiah||0)).replace(/\B(?=(\d{3})+(?!\d))/g,'.')); });
+  if (k.dibatalkan) h += '<div class="monSek">Dibatalkan / ditolak</div>'+monBaris('Oleh', esc(k.dibatalkan.oleh||'-')+' · '+monTgl(k.dibatalkan.pada))+monBaris('Alasan', esc(k.dibatalkan.alasan||'-'));
+  h += '</div>';
+  el.innerHTML = h;
+}
+
 function renderMonitorTab(el) {
+  if (MON && (MON.memuat || MON.memuatDetail)) { el.innerHTML = '<div class="empty">⏳ Memuat…</div>'; return; }
+  if (MON && MON.detail) { renderMonDetail(el); return; }
+  if (MON && MON.data) { renderMonDaftar(el); return; }
   var mons = S.monitoring || [];
   if (!mons.length) {
     el.innerHTML = '<div class="empty">Belum ada data monitoring. Tekan 🔄 Refresh saat ada sinyal.</div>';
     return;
   }
   var ov = S.monitoringOverall || {};
-  // Periode WAJIB disebut. Angka Approved kini hanya bulan berjalan — tanpa
-  // keterangan ini orang melihat angkanya turun dan mengira datanya hilang.
-  var html = '<div class="card" style="padding:12px">'+
-    '<b>Ringkasan scope Anda</b>'+
-    (ov.periode ? '<span class="badge" style="background:#0f766e;margin-left:6px">'+esc(ov.periode)+'</span>' : '')+
-    '<div class="sub" style="margin-top:4px">'+
-      '📝 Perlu diisi: <b>'+(ov.pending_mechanic_work||0)+'</b> · '+
-      '⏳ L1: <b>'+(ov.pending_l1||0)+'</b> · '+
-      '⏳ L2: <b>'+(ov.pending_l2||0)+'</b> · '+
-      '✅ Approved: <b>'+(ov.approved||0)+'</b>'+
-    '</div></div>';
+  // Enam ubin, semuanya bisa diklik. Periode WAJIB disebut di ubin Approved —
+  // angkanya hanya bulan berjalan; tanpa keterangan orang mengira datanya hilang.
+  function ubin(kat, angka, label, kelas) {
+    return '<div class="monUbin '+kelas+'" role="button" tabindex="0" onclick="'+(kat?'monBuka(\''+kat+'\')':'document.getElementById(\'monMekanik\').scrollIntoView({behavior:\'smooth\'})')+'">'+
+      '<div class="monAngka">'+(angka||0)+'</div><div class="monLabel">'+label+'</div></div>';
+  }
+  var html = '<div class="monUbinGrid">'+
+    ubin('', ov.mechanics || mons.length, '👷 Mekanik', '')+
+    ubin('belum', ov.pending_mechanic_work, '📝 Perlu diisi', 'mPmw')+
+    ubin('expired', ov.expired, '⏰ Expired', 'mExp')+
+    ubin('l1', ov.pending_l1, '⏳ Menunggu L1', 'mL1')+
+    ubin('l2', ov.pending_l2, '⏳ Menunggu L2', 'mL2')+
+    ubin('approved', ov.approved, '✅ Approved'+(ov.periode?'<br><small>'+esc(ov.periode)+'</small>':''), 'mAppr')+
+  '</div>';
 
-  html += '<div class="sub">'+mons.length+' mekanik</div>';
+  html += '<div class="sub" id="monMekanik">'+mons.length+' mekanik</div>';
   mons.forEach(function(m){
     html += '<div class="card">'+
       '<div class="cardTop"><b>'+esc(m.name||m.id)+'</b>'+
         (m.section?'<span class="badge" style="background:#334155">'+esc(m.section)+'</span>':'')+
       '</div>'+
       '<div class="cardBody">'+esc(m.id)+'<br>'+
-        '📝 '+(m.pending_mechanic_work||0)+' · ⏳ L1 '+(m.pending_l1||0)+
+        '📝 '+(m.pending_mechanic_work||0)+(m.expired?' · <b style="color:#b91c1c">⏰ '+m.expired+'</b>':'')+' · ⏳ L1 '+(m.pending_l1||0)+
         ' · ⏳ L2 '+(m.pending_l2||0)+' · ✅ '+(m.approved||0)+
       '</div>';
     if (m.has_token && m.token) {
@@ -2763,8 +2959,18 @@ function bukaBagianWo(id) { S.woView = id; renderAll(); window.scrollTo(0, 0); }
 function kembaliMenuWo()  { S.woView = null; renderAll(); window.scrollTo(0, 0); }
 
 function renderWos(el) {
-  var opByWo={};
-  S.outbox.forEach(function(o){if(o.wo_id&&(!opByWo[o.wo_id]||o.created_at>opByWo[o.wo_id].created_at))opByWo[o.wo_id]=o;});
+  var opByWo={}, opLaporByWo={};
+  S.outbox.forEach(function(o){
+    if (!o.wo_id) return;
+    // Laporan & buka kunci (Kadaluwarsa.gs) BUKAN operasi kerja. Kalau ikut,
+    // laporan yang sudah terkirim jadi "operasi terakhir" WO itu, canFill tak
+    // pernah kembali true, dan mekanik tak bisa mengisi WO yang SUDAH dibuka L2.
+    if (o.action === 'report_expired' || o.action === 'reopen_expired') {
+      if (o.action === 'report_expired' && (!opLaporByWo[o.wo_id] || o.created_at > opLaporByWo[o.wo_id].created_at)) opLaporByWo[o.wo_id] = o;
+      return;
+    }
+    if (!opByWo[o.wo_id] || o.created_at > opByWo[o.wo_id].created_at) opByWo[o.wo_id] = o;
+  });
   if (!S.wos.length) { el.innerHTML='<div class="empty">Belum ada kartu WO.<br>Tekan 🔄 Refresh saat ada sinyal.</div>'; return; }
 
   // Kemajuan tiap borongan dihitung dari SELURUH anggotanya, bukan hanya yang
@@ -2800,7 +3006,7 @@ function renderWos(el) {
         '<span class="secJudul">'+B.ikon+' '+esc(B.judul)+'</span>'+
         '<span class="secJml" style="background:'+B.warna+'">'+isi.length+'</span>'+
       '</div>'+
-      (isi.length ? _kartuWo(isi, opByWo, totalGrup, kirimGrup)
+      (isi.length ? _kartuWo(isi, opByWo, totalGrup, kirimGrup, opLaporByWo)
                   : '<div class="empty">Tidak ada WO di kategori ini.</div>');
     return;
   }
@@ -2824,7 +3030,8 @@ function renderWos(el) {
 }
 
 /** Render kartu (dengan pengelompokan borongan) untuk satu bagian. */
-function _kartuWo(daftar, opByWo, totalGrup, kirimGrup) {
+function _kartuWo(daftar, opByWo, totalGrup, kirimGrup, opLaporByWo) {
+  opLaporByWo = opLaporByWo || {};   // laporan kadaluwarsa per WO — lihat renderWos
   // Kelompokkan per WO Group. Baris tanpa grup jadi kelompok sendiri-sendiri,
   // jadi tampilan WO tunggal tidak berubah sama sekali.
   var grup = [], indeks = {};
@@ -2844,7 +3051,7 @@ function _kartuWo(daftar, opByWo, totalGrup, kirimGrup) {
     // Baris yang MASIH bisa diisi — dasar tombol "Kirim Semua"
     var bisaKirim = G.baris.filter(function(wo) {
       var op = opByWo[wo.id];
-      return String(wo.status)==='pending_mechanic_work' && (!op || op.status==='failed');
+      return String(wo.status)==='pending_mechanic_work' && (!op || op.status==='failed') && !woTerkunci(wo);
     });
     html += '<div class="card">';
 
@@ -2874,6 +3081,13 @@ function _kartuWo(daftar, opByWo, totalGrup, kirimGrup) {
     G.baris.forEach(function(wo, idx) {
       var op=opByWo[wo.id]; var b=badgeFor(wo,op);
       var canFill=String(wo.status)==='pending_mechanic_work'&&(!op||op.status==='failed');
+      // Kadaluwarsa: terkunci → timer & tombol kerja diganti catatan + Laporkan.
+      // Laporan yang masih ANTRE ikut mengunci (mekanik sudah memilih melapor);
+      // yang sudah terkirim diwakili tanda dari server, bukan oleh outbox.
+      var opLapor = opLaporByWo[wo.id];
+      var laporAntre = !!(opLapor && opLapor.status === 'queued');
+      var kunciKartu = String(wo.status)==='pending_mechanic_work' && (woTerkunci(wo) || laporAntre);
+      if (kunciKartu) { canFill = false; b = (wo.is_reported_expired===true || laporAntre) ? ['⏰ Dilaporkan','#ea580c'] : ['⏰ Terkunci','#dc2626']; }
       // Di dalam borongan tiap baris DIKOTAKKAN sendiri + diberi nomor urut.
       // Tanpa sekat tegas, timer & tombol milik baris berbeda terlihat menyatu
       // dan mekanik kehilangan jejak sedang mengerjakan yang mana.
@@ -2903,6 +3117,8 @@ function _kartuWo(daftar, opByWo, totalGrup, kirimGrup) {
           : '')+
         // Tiap baris punya timer, Isi Manual, Kirim, dan Transfer sendiri —
         // karena tiap baris memang WO utuh di server.
+        (kunciKartu ? kunciKartuHtml(wo, opLapor) : '')+
+        (canFill && wo.batas_kerja_str ? '<div class="sub" style="margin-top:6px;color:#92400e;font-weight:700">⏳ Kirim paling lambat '+esc(wo.batas_kerja_str)+'</div>' : '')+
         (canFill?_timerControls(wo):'')+
         (canFill?'<div style="display:flex;gap:6px;margin-top:10px">'+
           '<button class="big secondary" style="flex:1;margin-top:0" onclick="openSubmitWithTimer(\''+esc(String(wo.id))+'\')">✍️ Isi Manual</button>'+
@@ -2937,6 +3153,7 @@ function kirimSeluruhGrup(groupId) {
   S.wos.forEach(function(wo) {
     if (String(wo.wo_group_id||'') !== String(groupId)) return;
     if (String(wo.status) !== 'pending_mechanic_work') return;
+    if (woTerkunci(wo)) return;   // terkunci: tak ikut Kirim Semua (Kadaluwarsa.gs)
     var st = getTimerState(wo.id);
     var ms = (parseFloat(st.elapsed_ms)||0) + (st.state==='running' ? (Date.now()-(parseFloat(st.start_epoch)||Date.now())) : 0);
     if (ms > 0) siap.push({wo: wo, ms: ms}); else kosong.push(wo);
@@ -2954,7 +3171,7 @@ function kirimSeluruhGrup(groupId) {
     stopLiveTimer(x.wo.id);
     var mulai = new Date(now.getTime() - x.ms);
     return obPut({ op_id:uuid(), seq:(_enqSeq++), action:'submit_work', wo_id:x.wo.id, wo_number:x.wo.wo_number,
-      payload:{wo_id:x.wo.id, start_time:mulai.toISOString(), end_time:now.toISOString(), hour_meter:'', kilometers:'', part_category:''},
+      payload:{wo_id:x.wo.id, start_time:mulai.toISOString(), end_time:now.toISOString(), hour_meter:'', kilometers:'', part_category:'', diisi_at:now.toISOString()},
       status:'queued', created_at:new Date().toISOString(), label:'Submit · '+(x.wo.component_name||x.wo.wo_number) });
   });
   Promise.all(tugas).then(function(){
@@ -2989,7 +3206,12 @@ function timKerjaStr(team) {
 
 function renderCreateTab(el) {
   if (!S.refs) { el.innerHTML='<div class="empty">Tekan 🔄 Refresh untuk memuat data referensi.</div>'; return; }
-  el.innerHTML='<button class="big" onclick="openCreateForm()" style="margin-bottom:12px">➕ Buat Work Order Baru</button>'+
+  // Keterangan batas mundur & kadaluwarsa (Kadaluwarsa.gs) — untuk yang WO-nya
+  // terkena: L1 dan mekanik. WO buatan L2 bebas batas mundur.
+  var _ketKdl = (S.refs.kadaluwarsa_aktif && S.role !== 'superintendent')
+    ? '<div class="card kdlInfo">📅 WO hanya bisa mencatat pekerjaan paling lama <b>24 jam sebelum WO dibuat</b>. Untuk pekerjaan yang lebih lama, minta <b>L2</b> yang membuat WO-nya.<br>⏰ WO yang tidak dikirim dalam 24 jam terkunci — hanya L2 yang bisa membukanya.</div>'
+    : '';
+  el.innerHTML=_ketKdl+'<button class="big" onclick="openCreateForm()" style="margin-bottom:12px">➕ Buat Work Order Baru</button>'+
     '<div class="sub">Data referensi: '+(S.refs.jobs_field||[]).length+' job field, '+(S.refs.jobs_workshop||[]).length+' job WS, '+(S.refs.components||[]).length+' komponen tyreman</div>';
 }
 function wcLabel(wc){ return wc==='normal'?'Shift 1':wc==='difficult'?'Shift 2':wc==='extreme'?'Kondisi Ekstrim':(wc||'-'); }
@@ -3012,7 +3234,11 @@ function renderApprovalTab(el) {
               // spreadsheet. Padahal justru itu yang ditengok saat ada
               // pertanyaan "kenapa WO saya tidak dibayar".
               ['rejected','❌ Ditolak',(S.rejected||[]).length]];
-  var bar = '<div class="tabBar" style="display:flex;margin-bottom:12px;flex-wrap:wrap">'+subs.map(function(s){
+  // Spanduk L2 (Kadaluwarsa.gs): WO terkunci yang dilaporkan mekanik — hanya L2
+  // yang bisa membukanya. Angkanya ikut tarikan Monitoring yang sudah ada.
+  var _nLapor = (S.role === 'superintendent' && S.monitoringOverall) ? (parseInt(S.monitoringOverall.expired_dilaporkan, 10) || 0) : 0;
+  var spanduk = _nLapor ? '<div class="card kdlSpanduk" onclick="bukaExpiredDariApproval()">⏰ <b>'+_nLapor+' WO kadaluwarsa dilaporkan mekanik</b> — menunggu Anda membuka kuncinya. <u>Buka daftar →</u></div>' : '';
+  var bar = spanduk + '<div class="tabBar" style="display:flex;margin-bottom:12px;flex-wrap:wrap">'+subs.map(function(s){
     return '<button class="tab'+(S.appSub===s[0]?' active':'')+'" onclick="switchAppSub(\''+s[0]+'\')">'+s[1]+' ('+s[2]+')</button>';
   }).join('')+'</div>';
   var body = S.appSub==='active' ? renderActiveList()

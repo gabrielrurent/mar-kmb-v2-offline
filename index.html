@@ -235,6 +235,25 @@
     /* Reset menghapus jam kerja. Sengaja bergaya garis luar & paling redup —
        tindakan merusak tidak boleh terlihat semenarik Start atau Finish. */
     .btnReset{background:transparent;color:#6b7280;border:1px solid #d1d5db}
+  /* Kadaluwarsa & batas mundur (Kadaluwarsa.gs) */
+  .mundurNote { margin-top:6px; font-size:12px; line-height:1.45; color:#1e3a8a; background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px; padding:7px 9px; }
+  .kdlNote { background:#fef2f2 !important; border:1px solid #fecaca; color:#991b1b !important; font-weight:600; }
+  .kdlLapor { background:#fff7ed !important; border-color:#fed7aa; color:#9a3412 !important; }
+  .kdlSpanduk { background:#fef2f2; border:1px solid #fecaca; color:#991b1b; cursor:pointer; font-size:14px; line-height:1.45; }
+  .kdlInfo { background:#eff6ff; border:1px solid #bfdbfe; color:#1e3a8a; font-size:13px; line-height:1.5; }
+  /* Monitoring bisa diklik */
+  .monUbinGrid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:12px; }
+  .monUbin { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:10px 6px; text-align:center; cursor:pointer; }
+  .monUbin:active { transform:scale(.97); }
+  .monUbin:focus-visible { outline:3px solid #93c5fd; outline-offset:2px; }
+  .monAngka { font-size:22px; font-weight:800; line-height:1; }
+  .monLabel { font-size:11px; color:#6b7280; margin-top:5px; font-weight:700; line-height:1.3; }
+  .monUbin.mPmw { border-color:#bfdbfe; background:#eff6ff; } .monUbin.mExp { border-color:#fecaca; background:#fef2f2; }
+  .monUbin.mL1 { border-color:#ddd6fe; background:#f5f3ff; } .monUbin.mL2 { border-color:#fde68a; background:#fffbeb; }
+  .monUbin.mAppr { border-color:#bbf7d0; background:#f0fdf4; }
+  .monSek { font-weight:800; font-size:13px; margin:12px 0 4px; }
+  .monBaris { display:grid; grid-template-columns:110px 1fr; gap:2px 8px; font-size:13px; margin:2px 0; }
+  .monBaris span:first-child { color:#6b7280; }
   </style>
 </head>
 <body>
@@ -304,7 +323,7 @@
       </div>
 
       <div class="row2">
-        <div><label>Jam Mulai *</label><div id="slotFStart"></div></div>
+        <div><label>Jam Mulai *</label><div id="slotFStart"></div><div id="fMundurNote" class="mundurNote" style="display:none"></div></div>
         <div><label>Jam Selesai *</label><div id="slotFEnd"></div></div>
       </div>
       <!-- Bacaan balik durasi dari kedua picker. Angka jam/menit di dua kolom
@@ -510,6 +529,7 @@
               <div><span class="fboxHead" style="margin:0 0 4px">Selesai</span><div id="slotAOvEnd"></div></div>
             </div>
             <div id="aOvDurBox" style="background:#FFFBEB;border:1px solid #FDE68A;color:#92400E;border-radius:8px;padding:8px 10px;font-size:13px;font-weight:700">Durasi baru: <span id="aOvDurText">-</span></div>
+            <div id="aOvMundurNote" class="mundurNote" style="display:none"></div>
             <div class="sub" id="aOvPartialHint" style="display:none;color:#B45309;margin:7px 0 0"></div>
           </div>
 
